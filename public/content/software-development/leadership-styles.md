@@ -1,0 +1,10 @@
+---
+title: "#LEADERSHIP STYLE"
+slug: leadership-style
+categories: ["software-development"]
+tags: ["self reflection"]
+draft: false
+---
+When people asked how do you lead people? 
+
+Answer them with confidence: Ownership and Challenges. You gave people ownership, and challenges them to improve their level
