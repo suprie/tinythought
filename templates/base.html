@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ self.page_title() }}</title>
+  <meta name="description" content="{{ self.meta_description() }}">
+  <meta name="robots" content="{{ self.robots() }}">
+  <link rel="canonical" href="{{ self.canonical_url() }}">
+
+  <meta property="og:site_name" content="Mini Blog">
+  <meta property="og:type" content="{{ self.og_type() }}">
+  <meta property="og:title" content="{{ self.page_title() }}">
+  <meta property="og:description" content="{{ self.meta_description() }}">
+  <meta property="og:url" content="{{ self.canonical_url() }}">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{{ self.page_title() }}">
+  <meta name="twitter:description" content="{{ self.meta_description() }}">
+
+  <link rel="stylesheet" href="/static/style.css">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <main class="page">
+    <div class="container">
+      <header class="site-header">
+        <a href="/" class="badge">
+          <span class="dot"></span>
+          Mini Blog
+        </a>
+        {% block heading %}{% endblock %}
+      </header>
+
+      <nav class="pills" aria-label="Filter by category">
+        <a href="/" class="pill{% if self.active_category().is_none() %} pill-active{% endif %}">All</a>
+        {% for c in categories %}
+        <a href="/{{ c.slug }}" class="pill{% if self.is_active(c.slug) %} pill-active{% endif %}">{{ c.name }}</a>
+        {% endfor %}
+      </nav>
+
+      {% block content %}{% endblock %}
+
+      <footer class="site-footer">
+        <p>Short posts. No noise.</p>
+      </footer>
+    </div>
+  </main>
+</body>
+</html>
