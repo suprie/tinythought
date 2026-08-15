@@ -50,7 +50,9 @@ pub fn build_router(state: SharedState) -> Router {
 }
 
 /// Reindexes `state.content_dir` every [`REINDEX_INTERVAL`], swapping the
-/// index in atomically once the new one is fully built.
+/// index in atomically once the new one is fully built. Runs alongside
+/// [`spawn_content_watcher`] as a fallback for changes it might miss (e.g. an
+/// editor that writes outside the watch, or a watcher that failed to start).
 pub fn spawn_reindex_loop(state: SharedState) {
     tokio::spawn(async move {
         loop {
@@ -59,6 +61,43 @@ pub fn spawn_reindex_loop(state: SharedState) {
             let count = fresh.all_posts.len();
             *state.index.write().unwrap() = fresh;
             println!("reindexed: {count} posts");
+        }
+    });
+}
+
+/// Watches `state.content_dir` for filesystem changes and reindexes
+/// immediately, so a new or edited post shows up right away instead of
+/// waiting on [`REINDEX_INTERVAL`]. Runs on its own OS thread (`notify`'s
+/// callback isn't async) rather than a tokio task.
+pub fn spawn_content_watcher(state: SharedState) {
+    use notify::{RecursiveMode, Watcher};
+    use std::sync::mpsc;
+
+    let content_dir = state.content_dir.clone();
+    std::thread::spawn(move || {
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(tx) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("content watcher failed to start: {e}");
+                return;
+            }
+        };
+        if let Err(e) = watcher.watch(&content_dir, RecursiveMode::Recursive) {
+            eprintln!("content watcher failed to watch {}: {e}", content_dir.display());
+            return;
+        }
+
+        while rx.recv().is_ok() {
+            // A single save can fire several fs events (write + rename +
+            // metadata...). Drain the channel for a short quiet period so
+            // one edit triggers one reindex, not a burst of them.
+            while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
+
+            let fresh = content::build_index(&content_dir);
+            let count = fresh.all_posts.len();
+            *state.index.write().unwrap() = fresh;
+            println!("reindexed (content changed): {count} posts");
         }
     });
 }

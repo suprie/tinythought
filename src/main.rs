@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use miniblog::{build_router, build_state, spawn_reindex_loop};
+use miniblog::{build_router, build_state, spawn_content_watcher, spawn_reindex_loop};
 
 #[tokio::main]
 async fn main() {
@@ -16,6 +16,7 @@ async fn main() {
     }
 
     spawn_reindex_loop(state.clone());
+    spawn_content_watcher(state.clone());
 
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
