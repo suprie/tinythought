@@ -10,7 +10,9 @@ cargo run
 ```
 
 Server listens on `http://localhost:3000`. Indexes `public/content/` at
-startup, then reindexes every 5 hours.
+startup, then watches it for changes and reindexes immediately — add, edit,
+or delete a post and it shows up right away, no restart needed. A 5-hour
+poll runs alongside as a fallback in case the watcher misses something.
 
 Set `SITE_URL` (e.g. `https://yourdomain.com`, no trailing slash) in
 production — it's the origin used for canonical links, Open Graph/Twitter

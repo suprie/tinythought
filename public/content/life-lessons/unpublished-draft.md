@@ -1,5 +1,5 @@
 ---
-title: "#WorkInProgress"
+title: "WorkInProgress"
 slug: work-in-progress
 tags: ["draft"]
 draft: true

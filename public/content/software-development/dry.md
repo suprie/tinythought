@@ -1,5 +1,5 @@
 ---
-title: "#DRY"
+title: "DRY"
 slug: dry
 tags: ["principles"]
 draft: false

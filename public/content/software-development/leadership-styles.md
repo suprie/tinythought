@@ -1,5 +1,5 @@
 ---
-title: "#LEADERSHIP STYLE"
+title: "Leadership Style"
 slug: leadership-style
 categories: ["software-development"]
 tags: ["self reflection"]

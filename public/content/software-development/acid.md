@@ -1,5 +1,5 @@
 ---
-title: "#ACID"
+title: "ACID"
 slug: acid
 categories: ["software-development"]
 tags: ["databases", "fundamentals"]

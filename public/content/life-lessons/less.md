@@ -1,5 +1,5 @@
 ---
-title: "#Less"
+title: "Less"
 slug: less
 tags: ["minimalism"]
 draft: false

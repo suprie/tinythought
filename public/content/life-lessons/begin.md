@@ -1,5 +1,5 @@
 ---
-title: "#Begin"
+title: "Begin"
 slug: begin
 tags: ["momentum"]
 draft: false
