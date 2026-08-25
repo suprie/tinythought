@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+use std::{format, fs};
 
 use chrono::{DateTime, Utc};
 
-use crate::models::{Category, Frontmatter, Post};
+use crate::repositories::{Category, Frontmatter, Post};
 
 /// Snapshot of every published post, ready to serve. Rebuilt wholesale on
 /// (re)index and swapped in atomically — never mutated in place.
@@ -115,7 +115,9 @@ fn parse_post(path: &Path, category_slug: &str) -> Result<Post, String> {
         fm.categories
     };
 
-    let modified = fs::metadata(path).and_then(|m| m.modified()).map_err(|e| e.to_string())?;
+    let modified = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map_err(|e| e.to_string())?;
     let date: DateTime<Utc> = modified.into();
 
     let html = render_markdown(body.trim());
@@ -131,6 +133,7 @@ fn parse_post(path: &Path, category_slug: &str) -> Result<Post, String> {
         date,
         excerpt,
         html,
+        raw: body.trim().to_string(),
     })
 }
 
@@ -141,19 +144,26 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), String> {
     let rest = raw
         .strip_prefix("---")
         .ok_or("missing frontmatter (file must start with `---`)")?;
-    let rest = rest.strip_prefix('\n').or_else(|| rest.strip_prefix("\r\n")).unwrap_or(rest);
+    let rest = rest
+        .strip_prefix('\n')
+        .or_else(|| rest.strip_prefix("\r\n"))
+        .unwrap_or(rest);
 
     let end = rest
         .find("\n---")
         .ok_or("missing closing `---` for frontmatter")?;
     let frontmatter = &rest[..end];
     let body = &rest[end + 4..];
-    let body = body.strip_prefix('\n').or_else(|| body.strip_prefix("\r\n")).unwrap_or(body);
+    let body = body
+        .strip_prefix('\n')
+        .or_else(|| body.strip_prefix("\r\n"))
+        .unwrap_or(body);
     Ok((frontmatter, body))
 }
 
 fn render_markdown(body: &str) -> String {
-    let parser = pulldown_cmark::Parser::new_ext(body, pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
+    let parser =
+        pulldown_cmark::Parser::new_ext(body, pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, parser);
     html
@@ -161,7 +171,7 @@ fn render_markdown(body: &str) -> String {
 
 /// Plain-text excerpt for list views: markdown stripped, truncated to
 /// roughly `max_chars`, cut on a word boundary.
-fn plain_excerpt(body: &str, max_chars: usize) -> String {
+pub(crate) fn plain_excerpt(body: &str, max_chars: usize) -> String {
     use pulldown_cmark::{Event, Parser};
 
     let mut text = String::new();
@@ -200,10 +210,8 @@ mod tests {
 
         impl TempDir {
             pub fn new(name: &str) -> Self {
-                let dir = std::env::temp_dir().join(format!(
-                    "miniblog-test-{name}-{}",
-                    std::process::id()
-                ));
+                let dir = std::env::temp_dir()
+                    .join(format!("miniblog-test-{name}-{}", std::process::id()));
                 let _ = std::fs::remove_dir_all(&dir);
                 std::fs::create_dir_all(&dir).unwrap();
                 TempDir(dir)

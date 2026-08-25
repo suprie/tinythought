@@ -1,6 +1,6 @@
+use crate::repositories::{CategoryTable, PostTable};
 use askama::Template;
-
-use crate::models::{Category, Post};
+use std::format;
 
 /// Shared by every page: nav state plus the per-page SEO fields every
 /// template needs (title, description, canonical/OG URL, robots).
@@ -39,8 +39,8 @@ const SITE_DESCRIPTION: &str = "Short, no-noise posts on software development an
 #[derive(Template)]
 #[template(path = "index.html")]
 pub struct IndexTemplate<'a> {
-    pub categories: &'a [Category],
-    pub posts: &'a [Post],
+    pub categories: &'a [CategoryTable],
+    pub posts: &'a [PostTable],
     pub site_url: &'a str,
 }
 
@@ -62,9 +62,9 @@ impl NavContext for IndexTemplate<'_> {
 #[derive(Template)]
 #[template(path = "category.html")]
 pub struct CategoryTemplate<'a> {
-    pub categories: &'a [Category],
-    pub category: &'a Category,
-    pub posts: &'a [Post],
+    pub categories: &'a [CategoryTable],
+    pub category: &'a CategoryTable,
+    pub posts: &'a [PostTable],
     pub site_url: &'a str,
 }
 
@@ -76,13 +76,10 @@ impl NavContext for CategoryTemplate<'_> {
         self.site_url
     }
     fn page_title(&self) -> String {
-        format!("{} · Mini Blog", self.category.name)
+        format!("{} · tinythought.", self.category.title)
     }
     fn meta_description(&self) -> String {
-        format!(
-            "{} short posts in {} on Mini Blog.",
-            self.category.post_count, self.category.name
-        )
+        format!("{} on tinythought.", self.category.title)
     }
     fn canonical_path(&self) -> String {
         format!("/{}", self.category.slug)
@@ -92,14 +89,14 @@ impl NavContext for CategoryTemplate<'_> {
 #[derive(Template)]
 #[template(path = "post.html")]
 pub struct PostTemplate<'a> {
-    pub categories: &'a [Category],
-    pub post: &'a Post,
+    pub categories: &'a [CategoryTable],
+    pub post: &'a PostTable,
     pub site_url: &'a str,
 }
 
 impl NavContext for PostTemplate<'_> {
     fn active_category(&self) -> Option<&str> {
-        Some(&self.post.category)
+        Some(&self.post.category_name)
     }
     fn site_url(&self) -> &str {
         self.site_url
@@ -108,7 +105,7 @@ impl NavContext for PostTemplate<'_> {
         format!("{} · Mini Blog", self.post.title)
     }
     fn meta_description(&self) -> String {
-        self.post.excerpt.clone()
+        self.post.html.clone()
     }
     fn canonical_path(&self) -> String {
         format!("/posts/{}", self.post.slug)
@@ -128,8 +125,6 @@ impl PostTemplate<'_> {
             "@context": "https://schema.org",
             "@type": "Article",
             "headline": self.post.title,
-            "description": self.post.excerpt,
-            "datePublished": self.post.date.to_rfc3339(),
             "url": self.canonical_url(),
         }))
         .unwrap_or_default()
@@ -139,7 +134,7 @@ impl PostTemplate<'_> {
 #[derive(Template)]
 #[template(path = "404.html")]
 pub struct NotFoundTemplate<'a> {
-    pub categories: &'a [Category],
+    pub categories: &'a [CategoryTable],
     pub site_url: &'a str,
 }
 

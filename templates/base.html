@@ -35,7 +35,7 @@
       <nav class="pills" aria-label="Filter by category">
         <a href="/" class="pill{% if self.active_category().is_none() %} pill-active{% endif %}">All</a>
         {% for c in categories %}
-        <a href="/{{ c.slug }}" class="pill{% if self.is_active(c.slug) %} pill-active{% endif %}">{{ c.name }}</a>
+        <a href="/{{ c.slug }}" class="pill{% if self.is_active(c.slug) %} pill-active{% endif %}">{{ c.title }}</a>
         {% endfor %}
       </nav>
 

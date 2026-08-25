@@ -1,15 +1,23 @@
 pub mod content;
-pub mod models;
+pub mod repositories;
 pub mod routes;
+pub mod services;
 pub mod views;
 
 use std::path::PathBuf;
+use std::println;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use axum::routing::get;
 use axum::Router;
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
+use axum::middleware::{Next, from_fn_with_state};
+use axum::response::Response;
+use axum::routing::{get, post};
 use tower_http::services::ServeDir;
+
+use crate::services::{CategoryService, MigrationService, PostService};
 
 pub const REINDEX_INTERVAL: Duration = Duration::from_secs(5 * 60 * 60);
 
@@ -20,11 +28,21 @@ pub struct AppState {
     /// sitemap. Override via `SITE_URL` in production — search engines and
     /// link-preview crawlers (LinkedIn, Slack, ...) need real absolute URLs.
     pub site_url: String,
+    pub token: String,
+    pub category_services: Arc<CategoryService>,
+    pub migration_services: Arc<MigrationService>,
+    pub post_services: Arc<PostService>,
 }
 
 pub type SharedState = Arc<AppState>;
 
-pub fn build_state(content_dir: PathBuf) -> SharedState {
+pub fn build_state(
+    content_dir: PathBuf,
+    token: String,
+    category_services: Arc<CategoryService>,
+    post_services: Arc<PostService>,
+    migration_services: Arc<MigrationService>,
+) -> SharedState {
     let index = content::build_index(&content_dir);
     let site_url = std::env::var("SITE_URL")
         .unwrap_or_else(|_| "http://localhost:3000".to_string())
@@ -34,6 +52,10 @@ pub fn build_state(content_dir: PathBuf) -> SharedState {
         index: RwLock::new(index),
         content_dir,
         site_url,
+        token,
+        category_services,
+        migration_services,
+        post_services,
     })
 }
 
@@ -47,6 +69,14 @@ pub fn build_router(state: SharedState) -> Router {
         .fallback(routes::not_found)
         .nest_service("/static", ServeDir::new("public/static"))
         .with_state(state)
+}
+
+pub fn build_protected_router(state: SharedState) -> Router {
+    Router::new()
+        .route("/migrate", get(routes::migrate))
+        .route("/posts", post(routes::posts))
+        .route_layer(from_fn_with_state(state.clone(), auth))
+        .with_state(state) // Important: attach state to router
 }
 
 /// Reindexes `state.content_dir` every [`REINDEX_INTERVAL`], swapping the
@@ -84,7 +114,10 @@ pub fn spawn_content_watcher(state: SharedState) {
             }
         };
         if let Err(e) = watcher.watch(&content_dir, RecursiveMode::Recursive) {
-            eprintln!("content watcher failed to watch {}: {e}", content_dir.display());
+            eprintln!(
+                "content watcher failed to watch {}: {e}",
+                content_dir.display()
+            );
             return;
         }
 
@@ -100,4 +133,22 @@ pub fn spawn_content_watcher(state: SharedState) {
             println!("reindexed (content changed): {count} posts");
         }
     });
+}
+
+async fn auth(
+    State(state): State<SharedState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let ok = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|f| f.to_str().ok())
+        .and_then(|f| f.strip_prefix("Bearer "))
+        .is_some_and(|token| token == state.token);
+    if ok {
+        Ok(next.run(req).await)
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
 }

@@ -1,7 +1,12 @@
-use serde::Deserialize;
-
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 /// Raw fields parsed straight out of a post's YAML frontmatter block.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Frontmatter {
     pub title: String,
     #[serde(default)]
@@ -14,7 +19,30 @@ pub struct Frontmatter {
     pub draft: bool,
 }
 
-/// A fully parsed, render-ready post.
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error("database error")]
+    Database(#[source] sqlx::Error),
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        match self {
+            AppError::Database(error) => {
+                eprintln!("database error: {error}");
+
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "internal server error"
+                    })),
+                )
+                    .into_response()
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Post {
     pub title: String,
@@ -29,6 +57,32 @@ pub struct Post {
     pub date: chrono::DateTime<chrono::Utc>,
     pub excerpt: String,
     pub html: String,
+    pub raw: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PostTable {
+    pub id: i64,
+    pub title: String,
+    pub slug: String,
+    pub category_id: i64,
+    pub category_name: String,
+    pub category_slug: String,
+    pub html: String,
+    pub raw: String,
+    pub created_at: String,
+}
+
+impl PostTable {
+    pub fn date_label(&self) -> String {
+        chrono::DateTime::parse_from_rfc3339(&self.created_at)
+            .map(|d| d.format("%b %-d, %Y").to_string())
+            .unwrap_or_else(|_| self.created_at.clone())
+    }
+
+    pub fn excerpt(&self) -> String {
+        crate::content::plain_excerpt(&self.raw, 180)
+    }
 }
 
 impl Post {
@@ -43,6 +97,20 @@ pub struct Category {
     pub slug: String,
     pub name: String,
     pub post_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct CategoryTable {
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePost {
+    pub title: String,
+    pub category: String,
+    pub content: String,
 }
 
 impl Category {
