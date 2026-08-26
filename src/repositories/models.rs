@@ -65,6 +65,7 @@ pub struct PostTable {
     pub id: i64,
     pub title: String,
     pub slug: String,
+    pub excerpt: String,
     pub category_id: i64,
     pub category_name: String,
     pub category_slug: String,

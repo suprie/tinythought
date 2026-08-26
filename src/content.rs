@@ -198,7 +198,6 @@ pub(crate) fn plain_excerpt(body: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn markdown_body_renders_to_html() {
@@ -207,12 +206,4 @@ mod tests {
         assert!(result.contains("<strong>bold</strong>"));
         assert!(result.contains("<em>em</em>"));
     }
-
-    // #[test]
-    // fn excerpt_stops_at_max_chars_on_a_word_boundary() {
-    //     let long = "word ".repeat(100);
-    //     let excerpt = plain_excerpt(&long, 20);
-    //     assert!(excerpt.chars().count() <= 21); // + ellipsis
-    //     assert!(excerpt.ends_with('…'));
-    // }
 }

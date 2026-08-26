@@ -22,9 +22,11 @@ impl PostService {
         let html = self.render_markdown(&post.raw);
         let mut clone_post = post.clone();
         clone_post.html = html;
+        clone_post.excerpt = self.plain_excerpt(&post.raw, 100);
         self.repository.create(clone_post, category_id).await
     }
 
+    #[allow(dead_code)]
     fn plain_excerpt(&self, body: &str, max_chars: usize) -> String {
         use pulldown_cmark::{Event, Parser};
 

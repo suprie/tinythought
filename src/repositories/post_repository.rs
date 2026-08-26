@@ -35,6 +35,7 @@ impl PostRepository for SQLitePostRepository {
                 p.id,
                 p.title,
                 p.slug,
+                p.excerpt,
                 c.id as category_id,
                 c.title as category_name,
                 c.slug as category_slug,
@@ -52,10 +53,11 @@ impl PostRepository for SQLitePostRepository {
 
     async fn create(&self, post: Post, category_id: i64) -> Result<(), AppError> {
         sqlx::query!(
-            r#"INSERT INTO posts (title, slug, category_id, body_html, body_markdown, updated_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+            r#"INSERT INTO posts (title, slug, excerpt, category_id, body_html, body_markdown, updated_at, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
             &post.title,
             &post.slug,
+            &post.excerpt,
             &category_id,
             &post.html,
             &post.raw,
@@ -76,6 +78,7 @@ impl PostRepository for SQLitePostRepository {
                 p.id,
                 p.title,
                 p.slug,
+                p.excerpt,
                 c.id as category_id,
                 c.title as category_name,
                 c.slug as category_slug,
