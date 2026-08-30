@@ -9,6 +9,7 @@ use crate::repositories::{Category, Frontmatter, Post};
 /// Snapshot of every published post, ready to serve. Rebuilt wholesale on
 /// (re)index and swapped in atomically — never mutated in place.
 #[derive(Debug, Clone, Default)]
+#[deprecated(since = "0.1.0", note = "moving on SQLite")]
 pub struct Index {
     pub categories: Vec<Category>,
     pub all_posts: Vec<Post>,
@@ -25,6 +26,7 @@ impl Index {
 /// Walk `content_dir` (expected: `public/content/<category>/<post>.md`) and
 /// build a fresh index. Malformed posts are skipped with a warning rather
 /// than failing the whole index — one bad file shouldn't take the site down.
+#[deprecated(since = "0.1.0", note = "moving on SQLite")]
 pub fn build_index(content_dir: &Path) -> Index {
     let mut all_posts = Vec::new();
     let mut posts_by_category: HashMap<String, Vec<Post>> = HashMap::new();

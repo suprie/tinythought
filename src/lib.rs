@@ -1,7 +1,9 @@
 pub mod content;
+pub mod handlers;
 pub mod repositories;
 pub mod routes;
 pub mod services;
+pub mod shared;
 pub mod views;
 
 use std::path::PathBuf;
@@ -61,20 +63,20 @@ pub fn build_state(
 
 pub fn build_router(state: SharedState) -> Router {
     Router::new()
-        .route("/", get(routes::home))
-        .route("/posts/{slug}", get(routes::post_detail))
-        .route("/{category}", get(routes::category_page))
-        .route("/sitemap.xml", get(routes::sitemap_xml))
-        .route("/robots.txt", get(routes::robots_txt))
-        .fallback(routes::not_found)
+        .route("/", get(handlers::home))
+        .route("/posts/{slug}", get(handlers::post_detail))
+        .route("/{category}", get(handlers::category_page))
+        .route("/sitemap.xml", get(handlers::sitemap_xml))
+        .route("/robots.txt", get(handlers::robots_txt))
+        .fallback(handlers::not_found)
         .nest_service("/static", ServeDir::new("public/static"))
         .with_state(state)
 }
 
 pub fn build_protected_router(state: SharedState) -> Router {
     Router::new()
-        .route("/migrate", get(routes::migrate))
-        .route("/posts", post(routes::posts))
+        .route("/migrate", get(handlers::migrate))
+        .route("/posts", post(handlers::posts))
         .route_layer(from_fn_with_state(state.clone(), auth))
         .with_state(state) // Important: attach state to router
 }
