@@ -21,7 +21,15 @@ impl MigrationService {
 
     pub async fn migrate(&self, categories: &Vec<Category>, posts: &Vec<Post>) {
         for category in categories {
-            let _ = self.category_repository.create(category.clone()).await;
+            // Idempotent: a partial seeding run may have created only some
+            // categories, so create each one only if it is missing.
+            match self.category_repository.find_by_slug(&category.slug).await {
+                Ok(Some(_)) => continue,
+                Ok(None) => {
+                    let _ = self.category_repository.create(category.clone()).await;
+                }
+                Err(_) => continue,
+            }
         }
 
         for post in posts {
@@ -58,15 +66,14 @@ mod tests {
 
     use super::*;
     use chrono::Utc;
-    use sqlx::Sqlite;
-    use sqlx::pool::Pool;
+    use sqlx::PgPool;
 
-    use crate::repositories::{Category, Post, SQLiteCategoryRepository, SQLitePostRepository};
+    use crate::repositories::{Category, PgCategoryRepository, PgPostRepository, Post};
 
     #[sqlx::test]
-    async fn test_migrate(pool: Pool<Sqlite>) {
-        let category_repository = Arc::new(SQLiteCategoryRepository::new(pool.clone()));
-        let post_repository = Arc::new(SQLitePostRepository::new(pool));
+    async fn test_migrate(pool: PgPool) {
+        let category_repository = Arc::new(PgCategoryRepository::new(pool.clone()));
+        let post_repository = Arc::new(PgPostRepository::new(pool));
 
         let migration_services =
             MigrationService::new(category_repository.clone(), post_repository.clone());

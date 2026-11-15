@@ -1,8 +1,8 @@
-use std::{env, path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use miniblog::{
     build_protected_router, build_router, build_state,
-    repositories::{SQLiteCategoryRepository, SQLitePostRepository},
+    repositories::{PgCategoryRepository, PgPostRepository},
     services::{CategoryService, MigrationService, PostService},
     spawn_content_watcher, spawn_reindex_loop,
 };
@@ -11,13 +11,17 @@ use miniblog::{
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let content_dir = PathBuf::from("public/content");
-    let pool = sqlx::SqlitePool::connect(&env::var("DATABASE_URL")?).await?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(&env::var("DATABASE_URL")?)
+        .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let category_repository = Arc::new(SQLiteCategoryRepository::new(pool.clone()));
+    let category_repository = Arc::new(PgCategoryRepository::new(pool.clone()));
     let category_service = Arc::new(CategoryService::new(category_repository.clone()));
 
-    let post_repository = Arc::new(SQLitePostRepository::new(pool));
+    let post_repository = Arc::new(PgPostRepository::new(pool));
     let post_service = Arc::new(PostService::new(post_repository.clone()));
     let migration_service = Arc::new(MigrationService::new(category_repository, post_repository));
 
@@ -36,6 +40,21 @@ async fn main() -> anyhow::Result<()> {
             "indexed {} posts across {} categories",
             index.all_posts.len(),
             index.categories.len()
+        );
+    }
+
+    // First boot on a fresh database: seed it from the markdown files that
+    // ship with the image. Later boots leave the database alone.
+    if state.post_services.get_posts().await?.is_empty() {
+        let (categories, posts) = {
+            let index = state.index.read().unwrap();
+            (index.categories.clone(), index.all_posts.clone())
+        };
+        state.migration_services.migrate(&categories, &posts).await;
+        println!(
+            "seeded {} posts from {}",
+            posts.len(),
+            state.content_dir.display()
         );
     }
 

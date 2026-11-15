@@ -1,8 +1,7 @@
 use crate::repositories::models::AppError;
 use crate::repositories::{Category, CategoryTable};
 use async_trait::async_trait;
-use sqlx::pool::Pool;
-use sqlx::{Sqlite, SqlitePool};
+use sqlx::PgPool;
 
 #[async_trait]
 pub trait CategoryRepository: Send + Sync {
@@ -11,18 +10,18 @@ pub trait CategoryRepository: Send + Sync {
     async fn create(&self, category: Category) -> Result<CategoryTable, AppError>;
 }
 
-pub struct SQLiteCategoryRepository {
-    pool: Pool<Sqlite>,
+pub struct PgCategoryRepository {
+    pool: PgPool,
 }
 
-impl SQLiteCategoryRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+impl PgCategoryRepository {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
-impl CategoryRepository for SQLiteCategoryRepository {
+impl CategoryRepository for PgCategoryRepository {
     async fn find_all(&self) -> Result<Vec<CategoryTable>, AppError> {
         sqlx::query_as!(CategoryTable, "Select * FROM categories")
             .fetch_all(&self.pool)
@@ -60,8 +59,8 @@ mod tests {
     use crate::repositories::Category;
 
     #[sqlx::test]
-    async fn test_find_all(pool: Pool<Sqlite>) {
-        let category_repository = SQLiteCategoryRepository::new(pool);
+    async fn test_find_all(pool: PgPool) {
+        let category_repository = PgCategoryRepository::new(pool);
         let category = Category {
             slug: "slug".to_string(),
             name: "test".to_string(),
@@ -82,8 +81,8 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn test_insert(pool: Pool<Sqlite>) {
-        let category_repository = SQLiteCategoryRepository::new(pool);
+    async fn test_insert(pool: PgPool) {
+        let category_repository = PgCategoryRepository::new(pool);
         let category = Category {
             slug: "slug".to_string(),
             name: "test".to_string(),
@@ -99,11 +98,11 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn test_find_by_slug(pool: Pool<Sqlite>) {
+    async fn test_find_by_slug(pool: PgPool) {
         let _ = sqlx::query(
             r#"
                INSERT INTO categories (slug, title)
-               VALUES (?, ?)
+               VALUES ($1, $2)
                "#,
         )
         .bind("rust")
@@ -112,7 +111,7 @@ mod tests {
         .await
         .expect("category should be inserted");
 
-        let category_repository = SQLiteCategoryRepository::new(pool);
+        let category_repository = PgCategoryRepository::new(pool);
         if let Some(result) = category_repository
             .find_by_slug("rust")
             .await
@@ -124,8 +123,8 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn test_find_by_slug_found_nothing(pool: Pool<Sqlite>) {
-        let category_repository = SQLiteCategoryRepository::new(pool);
+    async fn test_find_by_slug_found_nothing(pool: PgPool) {
+        let category_repository = PgCategoryRepository::new(pool);
         let result = category_repository
             .find_by_slug("non-existing")
             .await

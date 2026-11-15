@@ -62,6 +62,7 @@ pub fn build_state(
 pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .route("/", get(routes::home))
+        .route("/health", get(routes::health))
         .route("/posts/{slug}", get(routes::post_detail))
         .route("/{category}", get(routes::category_page))
         .route("/sitemap.xml", get(routes::sitemap_xml))

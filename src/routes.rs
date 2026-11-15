@@ -1,14 +1,17 @@
-use std::fs;
-
 use askama::Template;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use chrono::Utc;
 
 use crate::SharedState;
-use crate::repositories::{AppError, CategoryTable, CreatePost, Frontmatter, Post};
+use crate::repositories::{AppError, CategoryTable, CreatePost, Post};
 use crate::views::{CategoryTemplate, IndexTemplate, NotFoundTemplate, PostTemplate};
 use axum::response::{Html, IntoResponse, Json, Response};
+
+/// Liveness probe for Docker/Caddy. Deliberately does not touch the database.
+pub async fn health() -> &'static str {
+    "ok"
+}
 
 #[axum::debug_handler]
 pub async fn home(State(state): State<SharedState>) -> Result<Html<String>, AppError> {

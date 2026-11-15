@@ -1,0 +1,41 @@
+name: tinythought
+
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "3"
+
+services:
+  app:
+    image: ghcr.io/suprie/tinythought:${TINYTHOUGHT_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      AUTH_TOKEN: ${AUTH_TOKEN:?set AUTH_TOKEN in .env}
+      SITE_URL: ${SITE_URL:?set SITE_URL in .env}
+    networks:
+      edge:
+        aliases: [tinythought]
+      data: {}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 128
+    logging: *bounded-logging
+    stop_grace_period: 10s
+
+networks:
+  # Shared Caddy ingress network. Caddy reaches the app as `tinythought:3000`.
+  edge:
+    external: true
+    name: vps-edge
+  # Shared PostgreSQL network. The database is reachable as `db:5432`.
+  data:
+    external: true
+    name: vps-data
