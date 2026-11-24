@@ -125,20 +125,28 @@ Docker networks.
    sudo install -d -m 750 -o 10001 -g 10001 /opt/tinythought/uploads
    ```
 
-2. Create the database and role by running
-   `ops/provision-tinythought.sql` from the infra repository on the VPS (set
-   the password there, then run the command in that file's header).
-
-3. Create `/opt/tinythought/.env`, readable only by the deployment user:
+2. Create `/opt/tinythought/.env`, readable only by the deployment user:
 
    ```sh
-   DATABASE_URL=postgres://tinythought:<password>@db:5432/tinythought
+   TINYTHOUGHT_DB_PASSWORD=<url-safe-random-password>
+   DATABASE_URL=postgres://tinythought:${TINYTHOUGHT_DB_PASSWORD}@db:5432/tinythought
    ADMIN_USERNAME=<your username>
    ADMIN_PASSWORD_HASH='<output from cargo run --bin hash_admin_password>'
    SITE_URL=https://blog.suprie.id
    ```
 
    `chmod 600 /opt/tinythought/.env`
+
+3. For a new database, run the provisioning script on the VPS. It reads
+   `TINYTHOUGHT_DB_PASSWORD` from the app's `.env`. Use letters, digits, hyphens,
+   and underscores for the password and enter it without quotes.
+
+   ```sh
+   bash /opt/vps-infra-biznetgio/ops/provision-tinythought.sh
+   ```
+
+   An existing Tinythought installation can keep its current `DATABASE_URL`
+   and skip provisioning.
 
 The New post form accepts one optional JPEG, PNG, GIF, or WebP image up to 5 MB.
 It applies the image's orientation, shrinks the longest edge to at most 1,600
