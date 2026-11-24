@@ -41,6 +41,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Run tests
+        env:
+          SQLX_OFFLINE: "true"
         run: cargo test --locked
 
   build:
