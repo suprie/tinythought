@@ -23,51 +23,57 @@
 {% if posted %}
 <p class="admin-success">Published.</p>
 {% endif %}
-{% if failed %}
-<p class="admin-error">Couldn't publish the post.</p>
-{% endif %}
-{% if upload_error %}
-<p class="admin-error">Couldn't prepare this image. Try a smaller JPEG, PNG, GIF, or WebP file up to 5 MB.</p>
-{% endif %}
 {% if delete_error %}
 <p class="admin-error">Couldn't delete the post.</p>
 {% endif %}
 
 <section class="admin-section">
-  <h2>New post</h2>
-  <form method="post" action="/admin/posts" enctype="multipart/form-data">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label class="admin-label" for="title">Title</label>
-    <input class="admin-input" type="text" id="title" name="title" required>
-    <label class="admin-label" for="category">Category</label>
-    <input class="admin-input" type="text" id="category" name="category" required>
-    <p class="admin-hint">An existing category name or a new one. A new one is created on publish.</p>
-    <label class="admin-label" for="content">Body (markdown)</label>
-    <textarea class="admin-textarea" id="content" name="content" required></textarea>
-    <label class="admin-label" for="image">Image (optional)</label>
-    <input class="admin-input" type="file" id="image" name="image" accept="image/jpeg,image/png,image/gif,image/webp">
-    <p class="admin-hint">JPEG, PNG, GIF, or WebP up to 5 MB. The resized, watermarked copy appears after the post body. Embedded metadata is removed.</p>
-    <button class="admin-button" type="submit">Publish</button>
-  </form>
+  <a class="admin-button" href="/admin/posts/new">New post</a>
 </section>
 
 <section class="admin-section">
-  <h2>Posts</h2>
+  <h2>Drafts</h2>
+  {% if drafts.is_empty() %}
+  <p class="empty">No drafts.</p>
+  {% else %}
+  <ul class="admin-list">
+    {% for draft in drafts %}
+    <li>
+      <span class="admin-list-title">{{ draft.title }}</span>
+      <div class="admin-actions">
+        <a href="/admin/drafts/{{ draft.id }}/preview" aria-label="Preview {{ draft.title }}">Preview</a>
+        <a href="/admin/drafts/{{ draft.id }}/edit" aria-label="Edit draft for {{ draft.title }}">Edit</a>
+        <form method="post" action="/admin/drafts/{{ draft.id }}/discard">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="admin-button" type="submit" aria-label="Discard draft for {{ draft.title }}">Discard</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="admin-section">
+  <h2>Published posts</h2>
   {% if !posts.is_empty() %}
   <ul class="admin-list">
     {% for post in posts %}
     <li>
       <span class="admin-list-date">{{ post.date_label() }}</span>
-      <a href="/posts/{{ post.slug }}">{{ post.title }}</a>
-      <form method="post" action="/admin/posts/{{ post.id }}/delete" style="margin-left:auto">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="admin-button" type="submit">Delete</button>
-      </form>
+      <a class="admin-list-title" href="/posts/{{ post.slug }}">{{ post.title }}</a>
+      <div class="admin-actions">
+        <a href="/admin/posts/{{ post.id }}/edit" aria-label="Edit {{ post.title }}">Edit</a>
+        <form method="post" action="/admin/posts/{{ post.id }}/delete">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="admin-button" type="submit" aria-label="Delete {{ post.title }}">Delete</button>
+        </form>
+      </div>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="empty">No posts in the database yet.</p>
+  <p class="empty">No published posts yet.</p>
   {% endif %}
 </section>
 

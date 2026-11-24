@@ -69,6 +69,41 @@ pub fn build_state(
 }
 
 pub fn build_router(state: SharedState) -> Router {
+    let admin = Router::new()
+        .route("/admin", get(routes::admin_page))
+        .route("/admin/login", post(routes::admin_login))
+        .route("/admin/logout", post(routes::admin_logout))
+        .route(
+            "/admin/posts",
+            post(routes::admin_create).layer(DefaultBodyLimit::max(routes::MAX_EDITOR_BYTES)),
+        )
+        .route("/admin/posts/new", get(routes::admin_new_editor))
+        .route(
+            "/admin/posts/{id}/edit",
+            get(routes::admin_post_editor)
+                .post(routes::admin_edit_post)
+                .layer(DefaultBodyLimit::max(routes::MAX_EDITOR_BYTES)),
+        )
+        .route("/admin/posts/{id}/delete", post(routes::admin_delete))
+        .route(
+            "/admin/drafts/{id}/edit",
+            get(routes::admin_draft_editor)
+                .post(routes::admin_edit_draft)
+                .layer(DefaultBodyLimit::max(routes::MAX_EDITOR_BYTES)),
+        )
+        .route("/admin/drafts/{id}/preview", get(routes::admin_preview))
+        .route("/admin/drafts/{id}/publish", post(routes::admin_publish))
+        .route("/admin/drafts/{id}/discard", post(routes::admin_discard))
+        .route(
+            "/admin/drafts/{id}/image/{filename}",
+            get(routes::admin_draft_image),
+        )
+        .route_layer(middleware::map_response(|mut response: Response| async {
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+        }));
     let uploads = Router::new()
         .nest_service("/uploads", ServeDir::new(state.upload_dir.clone()))
         .route_layer(middleware::map_response(|mut response: Response| async {
@@ -84,14 +119,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/", get(routes::home))
         .route("/health", get(routes::health))
         .route("/posts/{slug}", get(routes::post_detail))
+        .route("/post-images/{filename}", get(routes::published_post_image))
         .route("/{category}", get(routes::category_page))
         .route("/sitemap.xml", get(routes::sitemap_xml))
         .route("/robots.txt", get(routes::robots_txt))
-        .route("/admin", get(routes::admin_page))
-        .route("/admin/login", post(routes::admin_login))
-        .route("/admin/logout", post(routes::admin_logout))
-        .route("/admin/posts", post(routes::admin_create))
-        .route("/admin/posts/{id}/delete", post(routes::admin_delete))
+        .merge(admin)
         .fallback(routes::not_found)
         .nest_service("/static", ServeDir::new("public/static"))
         .merge(uploads)

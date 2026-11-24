@@ -1,7 +1,7 @@
 # tinythought
 
-Tiny blog. Rust + Axum + Askama + PostgreSQL. Posts are markdown files with
-YAML frontmatter; the database stores the published copy that the site serves.
+Tiny blog. Rust + Axum + Askama + PostgreSQL. Markdown files with YAML
+frontmatter seed the database. The admin dashboard saves drafts and publishes posts.
 
 ## Run locally
 
@@ -27,9 +27,8 @@ Migrations run automatically at startup. On a fresh database the server seeds
 it from the markdown files in `public/content/`; later boots leave existing
 rows alone.
 
-Server listens on `http://localhost:3000`. The content watcher reindexes the
-markdown files for `/sitemap.xml`; add, edit, or delete a post and the index
-updates immediately. A 5-hour poll runs alongside as a fallback.
+Server listens on `http://localhost:3000`. The public site and sitemap use the
+published posts in the database.
 
 ## Environment
 
@@ -94,8 +93,20 @@ Post body in markdown.
 - Published date isn't a frontmatter field — it's the file's last-modified
   time on disk.
 
-The first boot on an empty database seeds it from these files. Editing a file
-after seeding updates the sitemap but not the database copy.
+The first boot on an empty database seeds it from these files. Use the admin
+dashboard to edit the database copy and update the public site.
+
+## Draft and publish a post
+
+Sign in at `/admin`. Choose **New post** or **Edit** next to a published post.
+Place the cursor where you want an image, then choose **Insert images**. You can
+select several files and move their Markdown blocks independently. Edit the text
+in brackets to describe each image. **Save draft and preview** shows the rendered
+post. Use **Edit draft** to make more changes or reopen the preview later from
+**Drafts** on the dashboard.
+
+**Publish post** makes a new post public. **Publish changes** replaces the live
+version at its existing URL. **Discard** removes the saved draft.
 
 ## Routes
 
@@ -103,8 +114,9 @@ after seeding updates the sitemap but not the database copy.
 - `/health` — liveness probe (no database access)
 - `/<category-slug>` — posts in one category
 - `/posts/<article-slug>` — a single post
-- `/admin` — admin dashboard (username and password login, publish, delete; `noindex`)
-- `/uploads/*` — uploaded post images
+- `/admin` — admin dashboard with draft editing, preview, and publishing
+- `/post-images/*` — images attached through the draft editor
+- `/uploads/*` — images uploaded before the draft editor
 - `/static/*` — CSS, served from `public/static`
 - `/sitemap.xml` — every category + published post, for search engines
 - `/robots.txt` — points crawlers at the sitemap
@@ -125,14 +137,11 @@ Docker networks.
    sudo install -d -m 750 -o 10001 -g 10001 /opt/tinythought/uploads
    ```
 
-2. Create the database and role by running
-   `ops/provision-tinythought.sql` from the infra repository on the VPS (set
-   the password there, then run the command in that file's header).
-
-3. Create `/opt/tinythought/.env`, readable only by the deployment user:
+2. Create `/opt/tinythought/.env`, readable only by the deployment user:
 
    ```sh
-   DATABASE_URL=postgres://tinythought:<password>@db:5432/tinythought
+   TINYTHOUGHT_DB_PASSWORD=<url-safe-random-password>
+   DATABASE_URL=postgres://tinythought:${TINYTHOUGHT_DB_PASSWORD}@db:5432/tinythought
    ADMIN_USERNAME=<your username>
    ADMIN_PASSWORD_HASH='<output from cargo run --bin hash_admin_password>'
    SITE_URL=https://blog.suprie.id
@@ -140,18 +149,29 @@ Docker networks.
 
    `chmod 600 /opt/tinythought/.env`
 
-The New post form accepts one optional JPEG, PNG, GIF, or WebP image up to 5 MB.
-It applies the image's orientation, shrinks the longest edge to at most 1,600
+3. For a new database, run the provisioning script on the VPS. It reads
+   `TINYTHOUGHT_DB_PASSWORD` from the app's `.env`. Use letters, digits,
+   hyphens, and underscores, with up to two
+   trailing `=` characters for Base64 padding.
+
+   ```sh
+   bash /opt/vps-infra-biznetgio/ops/provision-tinythought.sh
+   ```
+
+   An existing Tinythought installation can keep its current `DATABASE_URL`
+   and skip provisioning.
+
+The post editor accepts up to four JPEG, PNG, GIF, or WebP images per save, each
+up to 5 MB. It applies each image's orientation, shrinks the longest edge to at most 1,600
 pixels, and adds a small `tinythought.` watermark in the lower-right corner
 before re-encoding without embedded metadata. Images too small for legible
-lettering skip the watermark. The app appends the public copy after the
-Markdown body and does not store the original. Animated
+lettering skip the watermark. The app stores the processed copies in PostgreSQL. Animated
 uploads are saved as animated PNGs. Large images and long animations can exceed
 the processing limits even when the source file fits the upload limit.
 
-Uploads persist in `/opt/tinythought/uploads` across container releases. Include
-that directory in host backups. Existing uploads keep their original bytes.
-Deleting a post leaves its uploaded image in place.
+Legacy uploads persist in `/opt/tinythought/uploads` across container releases.
+Include that directory and PostgreSQL in backups. Deleting a post leaves its
+published images in place.
 
 4. Make the GHCR package public (or run `docker login ghcr.io` once as the
    deployment user) so the server can pull the image.
@@ -189,11 +209,9 @@ Deploy the Caddy route from the infra repository around the same time — the
 ### CDN for post images
 
 To add a CDN later, put the blog hostname behind the CDN with Caddy as the
-origin. Cache successful `GET` and `HEAD` requests under `/uploads/*` using the
-origin's one-hour cache lifetime, and bypass the cache for `/admin` and
-`/admin/*`. The post Markdown uses relative `/uploads/…` URLs, so existing and
-new posts use the CDN without editing posts or changing the upload workflow.
-If you remove an image from storage, purge its URL from the CDN as well.
+origin. Cache successful `GET` and `HEAD` requests under `/post-images/*` and
+`/uploads/*` using the origin's one-hour cache lifetime. Bypass the cache for
+`/admin` and `/admin/*`, including draft previews and draft images.
 
 Verify after the first deploy:
 

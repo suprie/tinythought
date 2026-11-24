@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block heading %}{% endblock %}
+
+{% block content %}
+<section class="admin-section" aria-labelledby="preview-heading">
+  <p id="preview-heading"><strong>Draft preview</strong></p>
+  {% if draft.post_id.is_some() %}
+  <p>These changes go live when you publish.</p>
+  {% endif %}
+  {% if let Some(message) = error %}
+  <p class="admin-error" role="alert">{{ message }}</p>
+  {% endif %}
+  <form class="admin-actions" method="post" action="/admin/drafts/{{ draft.id }}/publish">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="revision" value="{{ draft.revision }}">
+    <button class="admin-button" type="submit">{% if draft.post_id.is_some() %}Publish changes{% else %}Publish post{% endif %}</button>
+    <a href="/admin/drafts/{{ draft.id }}/edit">Edit draft</a>
+    <a href="/admin">Back to admin</a>
+  </form>
+</section>
+{% let title = draft.title %}
+{% include "post_article.html" %}
+{% endblock %}

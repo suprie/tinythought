@@ -270,6 +270,10 @@ body {
   margin: 0 0 1rem;
 }
 
+.admin-section > .admin-button {
+  margin-top: 0;
+}
+
 .admin-label {
   display: block;
   font-family: var(--sans);
@@ -308,7 +312,9 @@ body {
 }
 
 .admin-button {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   margin-top: 1.2rem;
   font-family: var(--sans);
   font-size: 0.9375rem;
@@ -319,16 +325,22 @@ body {
   border-radius: 4px;
   padding: 0.55rem 1.1rem;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .admin-button:hover {
   background: #0026a8;
 }
 
+.admin-button[hidden],
+.admin-label[hidden] {
+  display: none;
+}
+
 .admin-hint {
   font-family: var(--sans);
   font-size: 0.8125rem;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   margin: 0.3rem 0 0;
 }
 
@@ -360,16 +372,45 @@ body {
 
 .admin-list li {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
   padding: 0.45rem 0;
   font-size: 1rem;
 }
 
+.admin-list-title {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.admin-actions .admin-button {
+  margin-top: 0;
+}
+
+.admin-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+}
+
+form > .admin-actions {
+  margin-top: 1.2rem;
+}
+
 .admin-list-date {
   font-family: var(--sans);
   font-size: 0.8125rem;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   flex-shrink: 0;
   min-width: 6.5rem;
 }
