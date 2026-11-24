@@ -138,8 +138,9 @@ Docker networks.
    `chmod 600 /opt/tinythought/.env`
 
 3. For a new database, run the provisioning script on the VPS. It reads
-   `TINYTHOUGHT_DB_PASSWORD` from the app's `.env`. Use letters, digits, hyphens,
-   and underscores for the password and enter it without quotes.
+   `TINYTHOUGHT_DB_PASSWORD` from the app's `.env`. Use letters, digits,
+   hyphens, and underscores, with up to two
+   trailing `=` characters for Base64 padding.
 
    ```sh
    bash /opt/vps-infra-biznetgio/ops/provision-tinythought.sh
