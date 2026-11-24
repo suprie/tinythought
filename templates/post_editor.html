@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block heading %}
+<h1 class="page-heading">{{ heading }}</h1>
+{% endblock %}
+
+{% block extra_head %}
+<script src="/static/post-editor.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<section class="admin-section">
+  {% if let Some(message) = error %}
+  <p class="admin-error" role="alert">{{ message }}</p>
+  {% endif %}
+  <form method="post" action="{{ action }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if let Some(version) = revision %}
+    <input type="hidden" name="revision" value="{{ version }}">
+    {% endif %}
+    <label class="admin-label" for="title">Title</label>
+    <input class="admin-input" type="text" id="title" name="title" value="{{ title }}" required>
+    <label class="admin-label" for="category">Category</label>
+    <input class="admin-input" type="text" id="category" name="category" value="{{ category }}" required aria-describedby="category-hint">
+    <p class="admin-hint" id="category-hint">New categories are created on publish.</p>
+    <label class="admin-label" for="content">Body (Markdown)</label>
+    <textarea class="admin-textarea" id="content" name="content" required>{{ raw }}</textarea>
+    <label class="admin-label" id="image-label" for="image">Images (optional)</label>
+    <input class="admin-input" type="file" id="image" name="image" multiple accept="image/jpeg,image/png,image/gif,image/webp" aria-describedby="image-hint">
+    <button class="admin-button" id="insert-images" type="button" aria-describedby="image-hint" hidden>Insert images</button>
+    <p class="admin-hint" id="image-hint">Add up to four images per save, 5 MB each. JPEG, PNG, GIF, or WebP.</p>
+    <noscript><p class="admin-hint">Uploads appear at the end. Edit the saved draft to move their Markdown.</p></noscript>
+    <p class="admin-hint" id="image-status" role="status"></p>
+    <div class="admin-actions">
+      <button class="admin-button" type="submit">Save draft and preview</button>
+      <a href="/admin">Back to admin</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

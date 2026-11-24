@@ -3,12 +3,14 @@ use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use chrono::Utc;
+use pulldown_cmark::{Event, Options, Parser, Tag};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::repositories::{AppError, CategoryTable, Post};
+use crate::repositories::{AppError, CategoryTable, DraftInput, PostDraft};
 use crate::views::{
-    AdminTemplate, CategoryTemplate, IndexTemplate, NotFoundTemplate, PostTemplate,
+    AdminTemplate, CategoryTemplate, IndexTemplate, NotFoundTemplate, PostEditorTemplate,
+    PostPreviewTemplate, PostTemplate,
 };
 use crate::{SharedState, post_image};
 
@@ -114,6 +116,10 @@ pub struct CsrfForm {
 }
 
 const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_IMAGES_PER_SAVE: usize = 4;
+pub(crate) const MAX_EDITOR_BYTES: usize = MAX_IMAGE_BYTES * MAX_IMAGES_PER_SAVE + 1024 * 1024;
+const IMAGE_UPLOAD_ERROR: &str =
+    "Choose up to four JPEG, PNG, GIF, or WebP files, each up to 5 MB.";
 
 #[derive(Default)]
 struct PostForm {
@@ -121,7 +127,8 @@ struct PostForm {
     category: String,
     content: String,
     csrf_token: String,
-    image: Option<Vec<u8>>,
+    images: Vec<(Option<usize>, Vec<u8>)>,
+    revision: Option<i64>,
 }
 
 async fn parse_post_form(mut multipart: Multipart) -> Result<PostForm, ()> {
@@ -132,16 +139,23 @@ async fn parse_post_form(mut multipart: Multipart) -> Result<PostForm, ()> {
             "category" => form.category = field.text().await.map_err(|_| ())?,
             "content" => form.content = field.text().await.map_err(|_| ())?,
             "csrf_token" => form.csrf_token = field.text().await.map_err(|_| ())?,
-            "image" => {
-                if form.image.is_some() {
-                    return Err(());
-                }
+            "revision" => {
+                form.revision = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|_| ())?
+                        .parse()
+                        .map_err(|_| ())?,
+                );
+            }
+            name if name == "image" || name.starts_with("image-") => {
+                let slot = name
+                    .strip_prefix("image-")
+                    .and_then(|slot| slot.parse().ok());
                 let bytes = field.bytes().await.map_err(|_| ())?;
-                if !bytes.is_empty() {
-                    if bytes.len() > MAX_IMAGE_BYTES {
-                        return Err(());
-                    }
-                    form.image = Some(bytes.to_vec());
+                if slot.is_some() || !bytes.is_empty() {
+                    form.images.push((slot, bytes.to_vec()));
                 }
             }
             _ => {}
@@ -160,9 +174,10 @@ pub async fn admin_page(
     let csrf_token = session_csrf(&state, &headers).unwrap_or_default();
     let logged_in = !csrf_token.is_empty();
 
-    let (posts, categories): (Vec<_>, Vec<_>) = if logged_in {
+    let (posts, drafts, categories) = if logged_in {
         (
             state.post_services.get_posts().await.unwrap_or_default(),
+            state.post_services.drafts().await.unwrap_or_default(),
             state
                 .category_services
                 .get_categories()
@@ -170,25 +185,21 @@ pub async fn admin_page(
                 .unwrap_or_default(),
         )
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new())
     };
 
     let tmpl = AdminTemplate {
         categories: &categories,
         posts: &posts,
+        drafts: &drafts,
         logged_in,
         posted: flash.contains_key("posted"),
         failed: flash.contains_key("failed"),
-        upload_error: flash.contains_key("upload_error"),
         delete_error: flash.contains_key("delete_error"),
         csrf_token: &csrf_token,
         site_url: &state.site_url,
     };
-    (
-        [(header::CACHE_CONTROL, "no-store")],
-        Html(tmpl.render().expect("admin template renders")),
-    )
-        .into_response()
+    Html(tmpl.render().expect("admin template renders")).into_response()
 }
 
 /// POST /admin/login — verify the password and issue a separate session ID.
@@ -225,66 +236,431 @@ pub async fn admin_logout(
     ([(header::SET_COOKIE, cookie)], Redirect::to("/admin")).into_response()
 }
 
-/// POST /admin/posts — publish a post from the dashboard form.
+#[derive(Clone, Copy)]
+enum EditorTarget {
+    New,
+    Post(i64),
+    Draft(i64),
+}
+
+impl EditorTarget {
+    fn action(self) -> String {
+        match self {
+            Self::New => "/admin/posts".to_owned(),
+            Self::Post(id) => format!("/admin/posts/{id}/edit"),
+            Self::Draft(id) => format!("/admin/drafts/{id}/edit"),
+        }
+    }
+}
+
+async fn render_editor(
+    state: &SharedState,
+    csrf_token: &str,
+    target: EditorTarget,
+    form: &PostForm,
+    error: Option<&str>,
+) -> Result<Response, AppError> {
+    let categories = state.category_services.get_categories().await?;
+    let tmpl = PostEditorTemplate {
+        categories: &categories,
+        heading: match target {
+            EditorTarget::New => "New post",
+            EditorTarget::Post(_) => "Edit post",
+            EditorTarget::Draft(_) => "Edit draft",
+        },
+        action: &target.action(),
+        title: &form.title,
+        category: &form.category,
+        raw: &form.content,
+        revision: form.revision,
+        error,
+        csrf_token,
+        site_url: &state.site_url,
+    };
+    let status = if error.is_some() {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::OK
+    };
+    Ok((
+        status,
+        Html(tmpl.render().expect("editor template renders")),
+    )
+        .into_response())
+}
+
+pub async fn admin_new_editor(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let Some(csrf) = session_csrf(&state, &headers) else {
+        return Ok(Redirect::to("/admin").into_response());
+    };
+    render_editor(&state, &csrf, EditorTarget::New, &PostForm::default(), None).await
+}
+
+pub async fn admin_post_editor(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let Some(csrf) = session_csrf(&state, &headers) else {
+        return Ok(Redirect::to("/admin").into_response());
+    };
+    if let Some(draft) = state.post_services.draft_for_post(id).await? {
+        return Ok(Redirect::to(&format!("/admin/drafts/{}/edit", draft.id)).into_response());
+    }
+    let post = match state.post_services.post_by_id(id).await {
+        Ok(post) => post,
+        Err(error) => return Ok(admin_lookup_error(error)),
+    };
+    let form = PostForm {
+        title: post.title,
+        category: post.category_name,
+        content: post.raw,
+        ..PostForm::default()
+    };
+    render_editor(&state, &csrf, EditorTarget::Post(id), &form, None).await
+}
+
+pub async fn admin_draft_editor(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let Some(csrf) = session_csrf(&state, &headers) else {
+        return Ok(Redirect::to("/admin").into_response());
+    };
+    let draft = match state.post_services.draft(id).await {
+        Ok(draft) => draft,
+        Err(error) => return Ok(admin_lookup_error(error)),
+    };
+    let form = PostForm {
+        title: draft.title,
+        category: draft.category,
+        content: draft.raw,
+        revision: Some(draft.revision),
+        ..PostForm::default()
+    };
+    render_editor(&state, &csrf, EditorTarget::Draft(id), &form, None).await
+}
+
 pub async fn admin_create(
     State(state): State<SharedState>,
     headers: HeaderMap,
     multipart: Multipart,
-) -> Response {
-    let form = match parse_post_form(multipart).await {
-        Ok(form) => form,
-        Err(()) => return Redirect::to("/admin?upload_error=1").into_response(),
+) -> Result<Response, AppError> {
+    save_editor(&state, &headers, EditorTarget::New, multipart).await
+}
+
+pub async fn admin_edit_post(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    multipart: Multipart,
+) -> Result<Response, AppError> {
+    save_editor(&state, &headers, EditorTarget::Post(id), multipart).await
+}
+
+pub async fn admin_edit_draft(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    multipart: Multipart,
+) -> Result<Response, AppError> {
+    save_editor(&state, &headers, EditorTarget::Draft(id), multipart).await
+}
+
+async fn save_editor(
+    state: &SharedState,
+    headers: &HeaderMap,
+    target: EditorTarget,
+    multipart: Multipart,
+) -> Result<Response, AppError> {
+    let Some(csrf) = session_csrf(state, headers) else {
+        return Ok(StatusCode::FORBIDDEN.into_response());
     };
-    if !valid_csrf(&state, &headers, &form.csrf_token) {
-        return StatusCode::FORBIDDEN.into_response();
+    let mut form = match parse_post_form(multipart).await {
+        Ok(form) => form,
+        Err(()) => {
+            return Ok((StatusCode::BAD_REQUEST, "Couldn't read the draft form.").into_response());
+        }
+    };
+    if csrf != form.csrf_token {
+        return Ok(StatusCode::FORBIDDEN.into_response());
     }
+    let draft = if let EditorTarget::Draft(id) = target {
+        match state.post_services.draft(id).await {
+            Ok(draft) if Some(draft.revision) == form.revision => Some(draft),
+            Ok(_) => return Ok(draft_conflict()),
+            Err(error) => return Ok(admin_lookup_error(error)),
+        }
+    } else {
+        None
+    };
     if form.title.trim().is_empty()
         || form.category.trim().is_empty()
         || form.content.trim().is_empty()
     {
-        return Redirect::to("/admin?failed=1").into_response();
+        return render_editor(
+            state,
+            &csrf,
+            target,
+            &form,
+            Some("Enter a title, category, and body."),
+        )
+        .await;
     }
 
-    let mut content = form.content;
-    let uploaded_path = if let Some(bytes) = form.image {
-        let Some((bytes, extension)) = post_image::prepare(bytes).await else {
-            return Redirect::to("/admin?upload_error=1").into_response();
-        };
-        if tokio::fs::create_dir_all(&state.upload_dir).await.is_err() {
-            return Redirect::to("/admin?failed=1").into_response();
-        }
-        let filename = format!("{:032x}.{extension}", rand::random::<u128>());
-        let path = state.upload_dir.join(&filename);
-        let mut file = match tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .await
-        {
-            Ok(file) => file,
-            Err(_) => return Redirect::to("/admin?failed=1").into_response(),
-        };
-        use tokio::io::AsyncWriteExt;
-        if file.write_all(&bytes).await.is_err() {
-            drop(file);
-            let _ = tokio::fs::remove_file(&path).await;
-            return Redirect::to("/admin?failed=1").into_response();
-        }
-        content.push_str(&format!("\n\n![Post image](/uploads/{filename})\n"));
-        Some(path)
-    } else {
-        None
+    let mut raw = form.content.clone();
+    let uploads = std::mem::take(&mut form.images);
+    let images = match prepare_draft_images(&mut raw, uploads).await {
+        Ok(images) => images,
+        Err(message) => return render_editor(state, &csrf, target, &form, Some(message)).await,
     };
+    let post_id = match target {
+        EditorTarget::Post(id) => Some(id),
+        _ => None,
+    };
+    let version = draft.as_ref().map(|draft| (draft.id, draft.revision));
+    let input = DraftInput {
+        title: form.title.trim().to_owned(),
+        category: form.category.trim().to_owned(),
+        referenced_images: markdown_images(&raw)
+            .filter_map(|url| url.strip_prefix("/post-images/").map(str::to_owned))
+            .collect(),
+        raw,
+        images,
+    };
+    match state
+        .post_services
+        .save_draft(post_id, version, input)
+        .await
+    {
+        Ok(id) => Ok(Redirect::to(&format!("/admin/drafts/{id}/preview")).into_response()),
+        Err(AppError::Database(sqlx::Error::RowNotFound)) => Ok(draft_conflict()),
+        Err(AppError::Database(sqlx::Error::Database(error))) if error.is_unique_violation() => {
+            Ok(draft_conflict())
+        }
+        Err(error) => Err(error),
+    }
+}
 
-    match create_post(&state, &form.title, &form.category, &content).await {
-        Ok(()) => Redirect::to("/admin?posted=1").into_response(),
-        Err(_) => {
-            if let Some(path) = uploaded_path {
-                let _ = tokio::fs::remove_file(path).await;
+fn markdown_images(body: &str) -> impl Iterator<Item = pulldown_cmark::CowStr<'_>> {
+    Parser::new_ext(body, Options::ENABLE_STRIKETHROUGH).filter_map(|event| match event {
+        Event::Start(Tag::Image { dest_url, .. }) => Some(dest_url),
+        _ => None,
+    })
+}
+
+async fn prepare_draft_images(
+    raw: &mut String,
+    uploads: Vec<(Option<usize>, Vec<u8>)>,
+) -> Result<Vec<(String, Vec<u8>)>, &'static str> {
+    if uploads.len() > MAX_IMAGES_PER_SAVE {
+        return Err(IMAGE_UPLOAD_ERROR);
+    }
+    let mut images = Vec::new();
+    for (slot, bytes) in uploads {
+        let placeholder = slot.map(|slot| format!("upload-image:{slot}"));
+        if let Some(url) = &placeholder
+            && !markdown_images(raw).any(|image| image.as_ref() == url)
+        {
+            if raw.contains(&format!("]({url})")) {
+                return Err("Move the image Markdown outside the code block before saving.");
             }
-            Redirect::to("/admin?failed=1").into_response()
+            continue;
+        }
+        if bytes.len() > MAX_IMAGE_BYTES {
+            return Err(IMAGE_UPLOAD_ERROR);
+        }
+        let (bytes, extension) = post_image::prepare(bytes).await.ok_or(IMAGE_UPLOAD_ERROR)?;
+        let filename = format!("{:032x}.{extension}", rand::random::<u128>());
+        let image_url = format!("/post-images/{filename}");
+        if let Some(url) = placeholder {
+            *raw = raw.replace(&format!("]({url})"), &format!("]({image_url})"));
+        } else {
+            raw.push_str(&format!("\n\n![Post image]({image_url})\n"));
+        }
+        if markdown_images(raw).any(|url| url.as_ref() == image_url) {
+            images.push((filename, bytes));
         }
     }
+    if markdown_images(raw).any(|url| url.starts_with("upload-image:")) {
+        return Err(
+            "Select the pending image files again in their original order, or remove their Markdown.",
+        );
+    }
+    Ok(images)
+}
+
+pub async fn admin_preview(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let Some(csrf) = session_csrf(&state, &headers) else {
+        return Ok(Redirect::to("/admin").into_response());
+    };
+    let draft = match state.post_services.draft(id).await {
+        Ok(draft) => draft,
+        Err(error) => return Ok(admin_lookup_error(error)),
+    };
+    render_preview(&state, &csrf, &draft, StatusCode::OK, None).await
+}
+
+async fn render_preview(
+    state: &SharedState,
+    csrf_token: &str,
+    draft: &PostDraft,
+    status: StatusCode,
+    error: Option<&str>,
+) -> Result<Response, AppError> {
+    let categories = state.category_services.get_categories().await?;
+    let tmpl = PostPreviewTemplate {
+        categories: &categories,
+        draft,
+        html: &state.post_services.render_draft(draft),
+        date_label: draft
+            .published_at
+            .unwrap_or_else(Utc::now)
+            .format("%b %-d, %Y")
+            .to_string(),
+        csrf_token,
+        error,
+        site_url: &state.site_url,
+    };
+    Ok((
+        status,
+        Html(tmpl.render().expect("preview template renders")),
+    )
+        .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct PublishForm {
+    csrf_token: String,
+    revision: i64,
+}
+
+pub async fn admin_publish(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(form): Form<PublishForm>,
+) -> Result<Response, AppError> {
+    if !valid_csrf(&state, &headers, &form.csrf_token) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+    let draft = match state.post_services.draft(id).await {
+        Ok(draft) => draft,
+        Err(error) => return Ok(admin_lookup_error(error)),
+    };
+    if draft.revision != form.revision {
+        return render_preview(
+            &state,
+            &form.csrf_token,
+            &draft,
+            StatusCode::CONFLICT,
+            Some("The draft changed. Review this version before publishing."),
+        )
+        .await;
+    }
+    match state.post_services.publish_draft(&draft).await {
+        Ok(()) => Ok(Redirect::to("/admin?posted=1").into_response()),
+        Err(AppError::Database(sqlx::Error::RowNotFound)) => Ok(draft_conflict()),
+        Err(AppError::Database(sqlx::Error::Database(error))) if error.is_unique_violation() => {
+            render_preview(
+                &state,
+                &form.csrf_token,
+                &draft,
+                StatusCode::CONFLICT,
+                Some("A post already uses this URL. Edit the draft title and try again."),
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub async fn admin_discard(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(form): Form<CsrfForm>,
+) -> Result<Response, AppError> {
+    if !valid_csrf(&state, &headers, &form.csrf_token) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+    state.post_services.discard_draft(id).await?;
+    Ok(Redirect::to("/admin").into_response())
+}
+
+pub async fn admin_draft_image(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((id, filename)): Path<(i64, String)>,
+) -> Result<Response, AppError> {
+    if session_csrf(&state, &headers).is_none() {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+    post_image_response(&state, Some(id), &filename).await
+}
+
+pub async fn published_post_image(
+    State(state): State<SharedState>,
+    Path(filename): Path<String>,
+) -> Result<Response, AppError> {
+    post_image_response(&state, None, &filename).await
+}
+
+async fn post_image_response(
+    state: &SharedState,
+    draft_id: Option<i64>,
+    filename: &str,
+) -> Result<Response, AppError> {
+    let content_type = match filename.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => return Ok(StatusCode::NOT_FOUND.into_response()),
+    };
+    let Some(bytes) = state.post_services.image(draft_id, filename).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    let cache = if draft_id.is_some() {
+        "no-store"
+    } else {
+        "public, max-age=3600"
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, cache),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+fn admin_lookup_error(error: AppError) -> Response {
+    match error {
+        AppError::Database(sqlx::Error::RowNotFound) => (
+            StatusCode::NOT_FOUND,
+            "This post or draft no longer exists.",
+        )
+            .into_response(),
+        error => error.into_response(),
+    }
+}
+
+fn draft_conflict() -> Response {
+    (
+        StatusCode::CONFLICT,
+        "This draft changed. Return to the admin dashboard and reopen it.",
+    )
+        .into_response()
 }
 
 /// POST /admin/posts/{id}/delete — remove a post from the database.
@@ -304,58 +680,6 @@ pub async fn admin_delete(
     Redirect::to("/admin").into_response()
 }
 
-// ---- post creation from the admin form ----
-
-/// Lowercases, keeps alphanumerics, collapses the rest into single dashes.
-/// The old `replace(' ', "-")` kept punctuation in slugs; this cleans it.
-fn slugify(title: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_dash = false;
-    for ch in title.chars() {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch.to_ascii_lowercase());
-            last_was_dash = false;
-        } else if (ch == ' ' || ch == '-' || ch == '_') && !slug.is_empty() && !last_was_dash {
-            slug.push('-');
-            last_was_dash = true;
-        }
-    }
-    let slug = slug.trim_matches('-').to_string();
-    if slug.is_empty() {
-        "untitled".to_string()
-    } else {
-        slug
-    }
-}
-
-async fn create_post(
-    state: &SharedState,
-    title: &str,
-    category: &str,
-    content: &str,
-) -> Result<(), AppError> {
-    let post = Post {
-        title: title.to_string(),
-        slug: slugify(title),
-        category: category.to_string(),
-        categories: Vec::new(),
-        tags: Vec::new(),
-        draft: false,
-        date: Utc::now(),
-        excerpt: String::new(),
-        html: String::new(),
-        raw: content.to_string(),
-    };
-    let category = state
-        .category_services
-        .find_or_create_category(category)
-        .await?;
-    state
-        .post_services
-        .create_new_post(&post, category.id)
-        .await
-}
-
 fn not_found_response(categories: &[CategoryTable], site_url: &str) -> Response {
     let tmpl = NotFoundTemplate {
         categories,
@@ -370,29 +694,30 @@ fn not_found_response(categories: &[CategoryTable], site_url: &str) -> Response 
 
 /// XML sitemap covering home, every category, and every published post —
 /// lets Google discover and crawl the whole site without waiting on links.
-pub async fn sitemap_xml(State(state): State<SharedState>) -> Response {
-    let index = state.index.read().unwrap();
+pub async fn sitemap_xml(State(state): State<SharedState>) -> Result<Response, AppError> {
+    let categories = state.category_services.get_categories().await?;
+    let posts = state.post_services.get_posts().await?;
     let site_url = &state.site_url;
 
     let mut urls = format!("  <url><loc>{site_url}/</loc></url>\n");
-    for category in &index.categories {
+    for category in &categories {
         urls.push_str(&format!(
             "  <url><loc>{site_url}/{}</loc></url>\n",
             xml_escape(&category.slug)
         ));
     }
-    for post in &index.all_posts {
+    for post in &posts {
         urls.push_str(&format!(
             "  <url><loc>{site_url}/posts/{}</loc><lastmod>{}</lastmod></url>\n",
             xml_escape(&post.slug),
-            post.date.format("%Y-%m-%d")
+            post.created_at.format("%Y-%m-%d")
         ));
     }
 
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n{urls}</urlset>\n"
     );
-    ([(header::CONTENT_TYPE, "application/xml")], body).into_response()
+    Ok(([(header::CONTENT_TYPE, "application/xml")], body).into_response())
 }
 
 pub async fn robots_txt(State(state): State<SharedState>) -> Response {

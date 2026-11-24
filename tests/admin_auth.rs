@@ -108,14 +108,31 @@ fn form_request(path: &str, body: &str, cookie: Option<&str>) -> Request<Body> {
 }
 
 fn post_request(path: &str, csrf: &str, cookie: Option<&str>) -> Request<Body> {
+    draft_request(path, csrf, cookie, "Test", "News", "Body", None)
+}
+
+fn draft_request(
+    path: &str,
+    csrf: &str,
+    cookie: Option<&str>,
+    title: &str,
+    category: &str,
+    content: &str,
+    revision: Option<i64>,
+) -> Request<Body> {
     let boundary = "tinythought-test-boundary";
-    let body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nTest\r\n\
-         --{boundary}\r\nContent-Disposition: form-data; name=\"category\"\r\n\r\nNews\r\n\
-         --{boundary}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\nBody\r\n\
-         --{boundary}\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\n{csrf}\r\n\
-         --{boundary}--\r\n"
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n{title}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"category\"\r\n\r\n{category}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n{content}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\n{csrf}\r\n"
     );
+    if let Some(revision) = revision {
+        body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"revision\"\r\n\r\n{revision}\r\n"
+        ));
+    }
+    body.push_str(&format!("--{boundary}--\r\n"));
     let mut request = Request::builder().method("POST").uri(path).header(
         header::CONTENT_TYPE,
         format!("multipart/form-data; boundary={boundary}"),
@@ -126,8 +143,7 @@ fn post_request(path: &str, csrf: &str, cookie: Option<&str>) -> Request<Body> {
     request.body(Body::from(body)).unwrap()
 }
 
-#[sqlx::test]
-async fn publishing_with_image_saves_and_serves_it(pool: PgPool) {
+fn signed_in_app(pool: &PgPool) -> (axum::Router, String, String) {
     let salt = SaltString::encode_b64(&[7; 16]).unwrap();
     let hash = Argon2::default()
         .hash_password(b"test password", &salt)
@@ -136,19 +152,40 @@ async fn publishing_with_image_saves_and_serves_it(pool: PgPool) {
     let auth = AdminAuth::new("owner".to_string(), hash, false).unwrap();
     let categories = Arc::new(PgCategoryRepository::new(pool.clone()));
     let posts = Arc::new(PgPostRepository::new(pool.clone()));
-    let mut state = build_state(
+    let state = build_state(
         PathBuf::from("public/content"),
         auth,
         Arc::new(CategoryService::new(categories.clone())),
         Arc::new(PostService::new(posts.clone())),
         Arc::new(MigrationService::new(categories, posts)),
     );
-    let upload_dir =
-        std::env::temp_dir().join(format!("tinythought-test-{:032x}", rand::random::<u128>()));
-    Arc::get_mut(&mut state).unwrap().upload_dir = upload_dir.clone();
     let (session, csrf) = state.admin_auth.create_session();
     let cookie = format!("{}={session}", state.admin_auth.cookie_name());
-    let app = build_router(state);
+    (build_router(state), cookie, csrf)
+}
+
+async fn get(app: &axum::Router, path: &str, cookie: Option<&str>) -> axum::response::Response {
+    let mut request = Request::builder().uri(path);
+    if let Some(cookie) = cookie {
+        request = request.header(header::COOKIE, cookie);
+    }
+    app.clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn body_text(response: axum::response::Response) -> String {
+    let bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+#[sqlx::test]
+async fn publishing_inline_images_preserves_their_placement_and_serves_them(pool: PgPool) {
+    let (app, cookie, csrf) = signed_in_app(&pool);
 
     let mut image = Vec::new();
     let mut encoder = png::Encoder::new(&mut image, 2000, 1000);
@@ -164,20 +201,131 @@ async fn publishing_with_image_saves_and_serves_it(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let preview_url = response.headers()[header::LOCATION].to_str().unwrap();
+    let draft_url = preview_url.strip_suffix("/preview").unwrap();
+    let dashboard = body_text(get(&app, "/admin", Some(&cookie)).await).await;
+    assert!(dashboard.contains(preview_url));
+    assert!(dashboard.contains("Image test"));
+    assert_eq!(
+        get(&app, preview_url, None).await.status(),
+        StatusCode::SEE_OTHER
+    );
+    let preview = get(&app, preview_url, Some(&cookie)).await;
+    assert_eq!(preview.status(), StatusCode::OK);
+    assert_eq!(preview.headers()[header::CACHE_CONTROL], "no-store");
+    let preview = body_text(preview).await;
+    assert!(preview.contains("noindex, nofollow"));
+    assert!(preview.contains("Draft preview"));
+    let image_prefix = format!("{draft_url}/image/");
+    let filenames: Vec<_> = preview
+        .split(&image_prefix)
+        .skip(1)
+        .map(|image| image.split('"').next().unwrap())
+        .collect();
+    let [filename, second_filename] = filenames.as_slice() else {
+        panic!("expected two private image URLs");
+    };
+    assert_ne!(filename, second_filename);
+    assert!(preview.contains(&format!(
+        "<p>Opening</p>\n<p><img src=\"{image_prefix}{filename}\" alt=\"First photo\" /></p>\n<p>Middle</p>"
+    )));
+    assert!(preview.contains(&format!(
+        "<p>Middle</p>\n<p><img src=\"{image_prefix}{second_filename}\" alt=\"Second photo\" /></p>\n<p>Closing</p>"
+    )));
+    let private_path = format!("{image_prefix}{filename}");
+    let public_path = format!("/post-images/{filename}");
+    let second_public_path = format!("/post-images/{second_filename}");
+    assert_eq!(
+        get(&app, &private_path, None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&app, &public_path, None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&app, &second_public_path, None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    let private_image = get(&app, &private_path, Some(&cookie)).await;
+    assert_eq!(private_image.status(), StatusCode::OK);
+    assert_eq!(private_image.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        get(&app, "/posts/image-test", None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&app, "/news", None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert!(
+        !body_text(get(&app, "/", None).await)
+            .await
+            .contains("Image test")
+    );
+    assert!(
+        !body_text(get(&app, "/sitemap.xml", None).await)
+            .await
+            .contains("/posts/image-test")
+    );
+
+    let reordered = format!(
+        "Opening\n\n![Second photo]({second_public_path})\n\nMiddle\n\n![First photo]({public_path})\n\nClosing"
+    );
+    let saved = app
+        .clone()
+        .oneshot(draft_request(
+            &format!("{draft_url}/edit"),
+            &csrf,
+            Some(&cookie),
+            "Image test",
+            "News",
+            &reordered,
+            Some(1),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.headers()[header::LOCATION], preview_url);
+
+    let publish_url = format!("{draft_url}/publish");
+    let response = app
+        .clone()
+        .oneshot(form_request(
+            &publish_url,
+            "csrf_token=wrong&revision=2",
+            Some(&cookie),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = app
+        .clone()
+        .oneshot(form_request(
+            &publish_url,
+            &format!("csrf_token={csrf}&revision=2"),
+            Some(&cookie),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(response.headers()[header::LOCATION], "/admin?posted=1");
+    assert_eq!(
+        get(&app, preview_url, Some(&cookie)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert!(
+        body_text(get(&app, "/sitemap.xml", None).await)
+            .await
+            .contains("/posts/image-test")
+    );
 
     let raw: String =
         sqlx::query_scalar("SELECT body_markdown FROM posts WHERE slug = 'image-test'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    let filename = raw
-        .split("/uploads/")
-        .nth(1)
-        .unwrap()
-        .split(')')
-        .next()
-        .unwrap();
+    assert!(raw.contains(&public_path));
+    assert!(raw.contains(&second_public_path));
     assert!(filename.ends_with(".png"));
     let detail = app
         .clone()
@@ -190,21 +338,21 @@ async fn publishing_with_image_saves_and_serves_it(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(detail.status(), StatusCode::OK);
-    let body = http_body_util::BodyExt::collect(detail.into_body())
-        .await
-        .unwrap()
-        .to_bytes();
-    assert!(
-        std::str::from_utf8(&body)
-            .unwrap()
-            .contains(&format!("src=\"/uploads/{filename}\""))
+    let body = body_text(detail).await;
+    assert!(body.contains(&format!(
+        "<p>Middle</p>\n<p><img src=\"{public_path}\" alt=\"First photo\" /></p>\n<p>Closing</p>"
+    )));
+    assert!(body.contains(&format!("src=\"{public_path}\"")));
+    assert_eq!(
+        get(&app, &second_public_path, None).await.status(),
+        StatusCode::OK
     );
 
     let served = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/uploads/{filename}"))
+                .uri(&public_path)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -244,20 +392,172 @@ async fn publishing_with_image_saves_and_serves_it(pool: PgPool) {
         .unwrap();
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     assert!(!missing.headers().contains_key(header::CACHE_CONTROL));
-    std::fs::remove_dir_all(upload_dir).unwrap();
+}
+
+#[sqlx::test]
+async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_published(pool: PgPool) {
+    let (app, cookie, csrf) = signed_in_app(&pool);
+    let category_id: i64 = sqlx::query_scalar(
+        "INSERT INTO categories (slug, title) VALUES ('news', 'News') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let post_id: i64 = sqlx::query_scalar(
+        "INSERT INTO posts (slug, title, category_id, body_markdown, body_html)
+         VALUES ('original', 'Original title', $1, 'Original body', '<p>Original body</p>')
+         RETURNING id",
+    )
+    .bind(category_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let edit_post_url = format!("/admin/posts/{post_id}/edit");
+    let editor = body_text(get(&app, &edit_post_url, Some(&cookie)).await).await;
+    assert!(editor.contains("Original body"));
+    let saved = app
+        .clone()
+        .oneshot(draft_request(
+            &edit_post_url,
+            &csrf,
+            Some(&cookie),
+            "Draft title",
+            "Ideas",
+            "**Draft body**",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::SEE_OTHER);
+    let preview_url = saved.headers()[header::LOCATION].to_str().unwrap();
+    let draft_url = preview_url.strip_suffix("/preview").unwrap();
+    let edit_draft_url = format!("{draft_url}/edit");
+    let editor = get(&app, &edit_post_url, Some(&cookie)).await;
+    assert_eq!(editor.headers()[header::LOCATION], edit_draft_url);
+    let preview = body_text(get(&app, preview_url, Some(&cookie)).await).await;
+    assert!(preview.contains("<strong>Draft body</strong>"));
+    let live = body_text(get(&app, "/posts/original", None).await).await;
+    assert!(live.contains("Original body"));
+    assert!(!live.contains("Draft body"));
+    assert_eq!(
+        get(&app, "/ideas", None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let saved = app
+        .clone()
+        .oneshot(draft_request(
+            &edit_draft_url,
+            &csrf,
+            Some(&cookie),
+            "Updated title",
+            "Ideas",
+            "**Updated body**",
+            Some(1),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.headers()[header::LOCATION], preview_url);
+    let publish_url = format!("{draft_url}/publish");
+    let stale = app
+        .clone()
+        .oneshot(form_request(
+            &publish_url,
+            &format!("csrf_token={csrf}&revision=1"),
+            Some(&cookie),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert!(
+        body_text(stale)
+            .await
+            .contains("<strong>Updated body</strong>")
+    );
+    assert!(
+        body_text(get(&app, "/posts/original", None).await)
+            .await
+            .contains("Original body")
+    );
+
+    let published = app
+        .clone()
+        .oneshot(form_request(
+            &publish_url,
+            &format!("csrf_token={csrf}&revision=2"),
+            Some(&cookie),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(published.headers()[header::LOCATION], "/admin?posted=1");
+    let live = get(&app, "/posts/original", None).await;
+    assert_eq!(live.status(), StatusCode::OK);
+    assert!(
+        body_text(live)
+            .await
+            .contains("<strong>Updated body</strong>")
+    );
+    assert!(
+        body_text(get(&app, "/ideas", None).await)
+            .await
+            .contains("Updated title")
+    );
+
+    let saved = app
+        .clone()
+        .oneshot(draft_request(
+            &edit_post_url,
+            &csrf,
+            Some(&cookie),
+            "Discarded title",
+            "Ideas",
+            "Discarded body",
+            None,
+        ))
+        .await
+        .unwrap();
+    let preview_url = saved.headers()[header::LOCATION].to_str().unwrap();
+    let discard_url = preview_url.strip_suffix("/preview").unwrap().to_owned() + "/discard";
+    let discarded = app
+        .clone()
+        .oneshot(form_request(
+            &discard_url,
+            &format!("csrf_token={csrf}"),
+            Some(&cookie),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(discarded.headers()[header::LOCATION], "/admin");
+    assert_eq!(
+        get(&app, preview_url, Some(&cookie)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert!(
+        body_text(get(&app, "/posts/original", None).await)
+            .await
+            .contains("<strong>Updated body</strong>")
+    );
 }
 
 fn image_request(csrf: &str, cookie: &str, image: &[u8]) -> Request<Body> {
     let boundary = "tinythought-image-test";
+    let content = "Opening\n\n![First photo](upload-image:1)\n\nMiddle\n\n![Second photo](upload-image:2)\n\nClosing";
     let mut body = format!(
         "--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nImage test\r\n\
          --{boundary}\r\nContent-Disposition: form-data; name=\"category\"\r\n\r\nNews\r\n\
-         --{boundary}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\nBody\r\n\
-         --{boundary}\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\n{csrf}\r\n\
-         --{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"photo.png\"\r\nContent-Type: image/png\r\n\r\n"
-    ).into_bytes();
-    body.extend_from_slice(image);
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+         --{boundary}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n{content}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\n{csrf}\r\n"
+    )
+    .into_bytes();
+    for slot in [2, 1] {
+        body.extend_from_slice(format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"image-{slot}\"; filename=\"photo.png\"\r\nContent-Type: image/png\r\n\r\n"
+        ).as_bytes());
+        body.extend_from_slice(image);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
     Request::builder()
         .method("POST")
         .uri("/admin/posts")

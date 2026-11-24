@@ -60,7 +60,7 @@ pub struct Post {
     pub raw: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PostTable {
     pub id: i64,
     pub title: String,
@@ -71,6 +71,26 @@ pub struct PostTable {
     pub html: String,
     pub raw: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct PostDraft {
+    pub id: i64,
+    pub post_id: Option<i64>,
+    pub title: String,
+    pub category: String,
+    pub raw: String,
+    pub revision: i64,
+    pub image_filenames: Vec<String>,
+    pub published_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub struct DraftInput {
+    pub title: String,
+    pub category: String,
+    pub raw: String,
+    pub images: Vec<(String, Vec<u8>)>,
+    pub referenced_images: Vec<String>,
 }
 
 impl PostTable {

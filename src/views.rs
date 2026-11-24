@@ -1,4 +1,4 @@
-use crate::repositories::{CategoryTable, PostTable};
+use crate::repositories::{CategoryTable, PostDraft, PostTable};
 use askama::Template;
 use std::format;
 
@@ -132,6 +132,69 @@ impl PostTemplate<'_> {
 }
 
 #[derive(Template)]
+#[template(path = "post_preview.html")]
+pub struct PostPreviewTemplate<'a> {
+    pub categories: &'a [CategoryTable],
+    pub draft: &'a PostDraft,
+    pub html: &'a str,
+    pub date_label: String,
+    pub csrf_token: &'a str,
+    pub error: Option<&'a str>,
+    pub site_url: &'a str,
+}
+
+impl NavContext for PostPreviewTemplate<'_> {
+    fn active_category(&self) -> Option<&str> {
+        None
+    }
+    fn site_url(&self) -> &str {
+        self.site_url
+    }
+    fn page_title(&self) -> String {
+        format!("Preview · {}", self.draft.title)
+    }
+    fn meta_description(&self) -> String {
+        "Private post preview.".to_string()
+    }
+    fn robots(&self) -> &'static str {
+        "noindex, nofollow"
+    }
+}
+
+#[derive(Template)]
+#[template(path = "post_editor.html")]
+pub struct PostEditorTemplate<'a> {
+    pub categories: &'a [CategoryTable],
+    pub heading: &'a str,
+    pub action: &'a str,
+    pub title: &'a str,
+    pub category: &'a str,
+    pub raw: &'a str,
+    pub revision: Option<i64>,
+    pub error: Option<&'a str>,
+    pub csrf_token: &'a str,
+    pub site_url: &'a str,
+}
+
+impl NavContext for PostEditorTemplate<'_> {
+    fn active_category(&self) -> Option<&str> {
+        None
+    }
+    fn site_url(&self) -> &str {
+        self.site_url
+    }
+    fn page_title(&self) -> String {
+        format!("{} · tinythought.", self.heading)
+    }
+    fn meta_description(&self) -> String {
+        "Post editor.".to_string()
+    }
+    fn robots(&self) -> &'static str {
+        "noindex, nofollow"
+    }
+}
+
+#[derive(Template)]
 #[template(path = "404.html")]
 pub struct NotFoundTemplate<'a> {
     pub categories: &'a [CategoryTable],
@@ -163,10 +226,10 @@ impl NavContext for NotFoundTemplate<'_> {
 pub struct AdminTemplate<'a> {
     pub categories: &'a [CategoryTable],
     pub posts: &'a [PostTable],
+    pub drafts: &'a [PostDraft],
     pub logged_in: bool,
     pub posted: bool,
     pub failed: bool,
-    pub upload_error: bool,
     pub delete_error: bool,
     pub csrf_token: &'a str,
     pub site_url: &'a str,
