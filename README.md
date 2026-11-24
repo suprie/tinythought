@@ -5,19 +5,23 @@ YAML frontmatter; the database stores the published copy that the site serves.
 
 ## Run locally
 
-Start a PostgreSQL instance and point `DATABASE_URL` at it:
+Start the local PostgreSQL container, then run the app on your machine:
 
 ```sh
-docker run --rm -d --name tinythought-pg \
-  -e POSTGRES_USER=tinythought \
-  -e POSTGRES_PASSWORD=tinythought \
-  -e POSTGRES_DB=tinythought \
-  -p 5432:5432 postgres:16-alpine
-
-cp .env.example .env
-# edit AUTH_TOKEN and DATABASE_URL if needed
+docker compose -f compose.dev.yml up -d --wait
+cp -n .env.example .env
+cargo run --bin hash_admin_password
+# Set ADMIN_PASSWORD_HASH in .env to the printed hash, inside single quotes.
 cargo run
 ```
+
+The database data persists in a Docker volume. Stop it with
+`docker compose -f compose.dev.yml down` when finished. The VPS uses the
+separate `compose.yml`.
+
+`cp -n` keeps an existing `.env`. If you already have one, set its
+`DATABASE_URL` to `postgres://tinythought:tinythought@localhost:5432/tinythought`
+to match `compose.dev.yml`.
 
 Migrations run automatically at startup. On a fresh database the server seeds
 it from the markdown files in `public/content/`; later boots leave existing
@@ -32,10 +36,15 @@ updates immediately. A 5-hour poll runs alongside as a fallback.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | yes | PostgreSQL connection string. |
-| `AUTH_TOKEN` | yes | Bearer token for `POST /posts` and `GET /migrate`. |
+| `ADMIN_USERNAME` | yes | Username for the single admin account. |
+| `ADMIN_PASSWORD_HASH` | yes | Argon2id hash from `cargo run --bin hash_admin_password`. |
 | `SITE_URL` | no | Absolute origin (no trailing slash) for canonical/OG URLs, `/robots.txt`, `/sitemap.xml`. Defaults to `http://localhost:3000`. |
+| `UPLOAD_DIR` | no | Directory for uploaded post images. Defaults to `uploads`; the container uses `/app/uploads`. |
 
-Generate a token with `openssl rand -hex 32`.
+The password hash command prompts without echoing the password. Set the hash as
+`ADMIN_PASSWORD_HASH='$argon2id$...'` so Docker Compose keeps its dollar signs.
+Login sessions last 24 hours and are cleared when the app restarts. If you already have a
+`.env`, remove `AUTH_TOKEN` and add the two admin variables above.
 
 ## Test
 
@@ -94,11 +103,11 @@ after seeding updates the sitemap but not the database copy.
 - `/health` — liveness probe (no database access)
 - `/<category-slug>` — posts in one category
 - `/posts/<article-slug>` — a single post
+- `/admin` — admin dashboard (username and password login, publish, delete; `noindex`)
+- `/uploads/*` — uploaded post images
 - `/static/*` — CSS, served from `public/static`
 - `/sitemap.xml` — every category + published post, for search engines
 - `/robots.txt` — points crawlers at the sitemap
-- `POST /posts` — create a post (Bearer `AUTH_TOKEN`)
-- `GET /migrate` — copy the file index into the database (Bearer `AUTH_TOKEN`)
 
 ## Deploy to the VPS
 
@@ -113,6 +122,7 @@ Docker networks.
 
    ```sh
    sudo install -d -m 750 -o DEPLOY_USER -g DEPLOY_GROUP /opt/tinythought
+   sudo install -d -m 750 -o 10001 -g 10001 /opt/tinythought/uploads
    ```
 
 2. Create the database and role by running
@@ -123,11 +133,25 @@ Docker networks.
 
    ```sh
    DATABASE_URL=postgres://tinythought:<password>@db:5432/tinythought
-   AUTH_TOKEN=<openssl rand -hex 32>
+   ADMIN_USERNAME=<your username>
+   ADMIN_PASSWORD_HASH='<output from cargo run --bin hash_admin_password>'
    SITE_URL=https://blog.suprie.id
    ```
 
    `chmod 600 /opt/tinythought/.env`
+
+The New post form accepts one optional JPEG, PNG, GIF, or WebP image up to 5 MB.
+It applies the image's orientation, shrinks the longest edge to at most 1,600
+pixels, and adds a small `tinythought.` watermark in the lower-right corner
+before re-encoding without embedded metadata. Images too small for legible
+lettering skip the watermark. The app appends the public copy after the
+Markdown body and does not store the original. Animated
+uploads are saved as animated PNGs. Large images and long animations can exceed
+the processing limits even when the source file fits the upload limit.
+
+Uploads persist in `/opt/tinythought/uploads` across container releases. Include
+that directory in host backups. Existing uploads keep their original bytes.
+Deleting a post leaves its uploaded image in place.
 
 4. Make the GHCR package public (or run `docker login ghcr.io` once as the
    deployment user) so the server can pull the image.
@@ -162,6 +186,15 @@ Deploy the Caddy route from the infra repository around the same time — the
 `Caddyfile.d/10-tinythought.caddy` file there proxies `blog.suprie.id` to
 `tinythought:3000`. Until the app is running, Caddy returns 502.
 
+### CDN for post images
+
+To add a CDN later, put the blog hostname behind the CDN with Caddy as the
+origin. Cache successful `GET` and `HEAD` requests under `/uploads/*` using the
+origin's one-hour cache lifetime, and bypass the cache for `/admin` and
+`/admin/*`. The post Markdown uses relative `/uploads/…` URLs, so existing and
+new posts use the CDN without editing posts or changing the upload workflow.
+If you remove an image from storage, purge its URL from the CDN as well.
+
 Verify after the first deploy:
 
 ```sh
@@ -185,6 +218,7 @@ public/                      static assets + content/
 migrations/                  sqlx migrations (PostgreSQL)
 .sqlx/                       offline query metadata for DB-free builds
 Dockerfile                   multi-stage release build
+compose.dev.yml              local PostgreSQL for development
 compose.yml                  VPS deployment (vps-edge + vps-data)
 scripts/deploy-vps.sh        pull + recreate on the server
 .github/workflows/deploy.yml test, build, push, deploy

@@ -52,7 +52,7 @@ impl NavContext for IndexTemplate<'_> {
         self.site_url
     }
     fn page_title(&self) -> String {
-        "Mini Blog".to_string()
+        "tinythought.".to_string()
     }
     fn meta_description(&self) -> String {
         SITE_DESCRIPTION.to_string()
@@ -96,13 +96,13 @@ pub struct PostTemplate<'a> {
 
 impl NavContext for PostTemplate<'_> {
     fn active_category(&self) -> Option<&str> {
-        Some(&self.post.category_name)
+        Some(&self.post.category_slug)
     }
     fn site_url(&self) -> &str {
         self.site_url
     }
     fn page_title(&self) -> String {
-        format!("{} · Mini Blog", self.post.title)
+        format!("{} · tinythought.", self.post.title)
     }
     fn meta_description(&self) -> String {
         self.post.html.clone()
@@ -146,10 +146,47 @@ impl NavContext for NotFoundTemplate<'_> {
         self.site_url
     }
     fn page_title(&self) -> String {
-        "Not found · Mini Blog".to_string()
+        "Not found · tinythought.".to_string()
     }
     fn meta_description(&self) -> String {
         "The page you're looking for doesn't exist or has been moved.".to_string()
+    }
+    fn robots(&self) -> &'static str {
+        "noindex, nofollow"
+    }
+}
+
+/// /admin — login form when signed out, dashboard (new-post form + post list
+/// + logout) when signed in. `noindex` so it stays out of search results.
+#[derive(Template)]
+#[template(path = "admin.html")]
+pub struct AdminTemplate<'a> {
+    pub categories: &'a [CategoryTable],
+    pub posts: &'a [PostTable],
+    pub logged_in: bool,
+    pub posted: bool,
+    pub failed: bool,
+    pub upload_error: bool,
+    pub delete_error: bool,
+    pub csrf_token: &'a str,
+    pub site_url: &'a str,
+}
+
+impl NavContext for AdminTemplate<'_> {
+    fn active_category(&self) -> Option<&str> {
+        None
+    }
+    fn site_url(&self) -> &str {
+        self.site_url
+    }
+    fn page_title(&self) -> String {
+        "Admin · tinythought.".to_string()
+    }
+    fn meta_description(&self) -> String {
+        "Admin area.".to_string()
+    }
+    fn canonical_path(&self) -> String {
+        "/admin".to_string()
     }
     fn robots(&self) -> &'static str {
         "noindex, nofollow"

@@ -104,13 +104,6 @@ pub struct CategoryTable {
     pub title: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreatePost {
-    pub title: String,
-    pub category: String,
-    pub content: String,
-}
-
 impl Category {
     pub fn from_slug(slug: &str, post_count: usize) -> Self {
         let name = slug

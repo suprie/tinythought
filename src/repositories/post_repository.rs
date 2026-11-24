@@ -12,6 +12,7 @@ pub trait PostRepository: Send + Sync {
     async fn find_by_slug(&self, slug: &str) -> Result<PostTable, AppError>;
 
     async fn create(&self, post: Post, category_id: i64) -> Result<(), AppError>;
+    async fn delete(&self, id: i64) -> Result<(), AppError>;
 }
 
 pub struct PgPostRepository {
@@ -91,6 +92,18 @@ impl PostRepository for PgPostRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(AppError::Database)
+    }
+
+    // Runtime-checked query (not the `query!` macro): there's no database on
+    // this dev machine to regenerate the sqlx offline cache for a new macro
+    // query, and macro queries fail to compile without one.
+    async fn delete(&self, id: i64) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM posts WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::Database)
+            .map(|_| ())
     }
 }
 

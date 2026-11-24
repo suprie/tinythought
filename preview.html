@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tinythought. — design preview</title>
+  <link rel="stylesheet" href="public/static/style.css">
+</head>
+<body>
+  <main class="container">
+    <header class="site-header">
+      <a class="wordmark" href="#">tinythought<span class="wordmark-period">.</span></a>
+      <nav class="site-nav">
+        <a href="#">Life Lessons</a>
+        <a href="#" class="active">Software Development</a>
+        <a href="#admin">admin</a>
+      </nav>
+    </header>
+
+    <h1 class="page-heading">Tiny thoughts.</h1>
+
+    <ul class="entry-list entry-list-home">
+      <li class="entry">
+        <div class="entry-date">Nov 21, 2026</div>
+        <h2 class="entry-title"><a href="#post">ACID</a></h2>
+        <p class="entry-excerpt">Atomicity, Consistency, Isolation, Durability. The four properties that make a database transaction trustworthy, and what each one actually guarantees.</p>
+      </li>
+      <li class="entry">
+        <div class="entry-date">Nov 19, 2026</div>
+        <h2 class="entry-title"><a href="#post">DRY</a></h2>
+        <p class="entry-excerpt">Every piece of knowledge should have a single, unambiguous representation in a system. Why duplication is cheaper than the wrong abstraction.</p>
+      </li>
+      <li class="entry">
+        <div class="entry-date">Nov 12, 2026</div>
+        <h2 class="entry-title"><a href="#post">Less</a></h2>
+        <p class="entry-excerpt">Owning fewer things, maintaining fewer systems, keeping fewer commitments. The quiet compounding of subtracting.</p>
+      </li>
+    </ul>
+
+    <footer class="site-footer">
+      <p>Short posts. No noise.</p>
+    </footer>
+  </main>
+
+  <hr>
+  <div id="post" class="container" style="border:none">
+    <div class="post-meta">Nov 21, 2026</div>
+    <h1 class="post-title">ACID</h1>
+    <div class="post-body">
+      <p>When people say a database is <em>trustworthy</em>, they usually mean it holds these four properties. Here is what each one actually guarantees, without the textbook hedging.</p>
+      <p>Atomicity means the transaction either happens or it does not. There is no third state, no half-written row that a crash leaves behind.</p>
+      <blockquote>Consistency is a property of your rules, not of the engine that enforces them.</blockquote>
+      <p>Isolation is about concurrent transactions. Durability is about power. A commit that returns OK survives a crash the moment after.</p>
+      <pre><code>BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;</code></pre>
+      <p>Inline <code>code</code> sits on a quiet grey. <a href="#">Links are blue and underlined</a>, the way the web always did it.</p>
+    </div>
+  </div>
+
+  <hr>
+  <div id="admin" class="container" style="border:none">
+    <h1 class="page-heading">Admin</h1>
+
+    <section class="admin-section">
+      <h2>New post</h2>
+      <form onsubmit="return false">
+        <label class="admin-label" for="t">Title</label>
+        <input class="admin-input" id="t" type="text" value="Idempotency on mobile networks">
+        <label class="admin-label" for="c">Category</label>
+        <input class="admin-input" id="c" type="text" value="software-development">
+        <label class="admin-label" for="b">Body (markdown)</label>
+        <textarea class="admin-textarea" id="b">A request that can be replayed safely is worth more than a fast one.</textarea>
+        <button class="admin-button" type="submit">Publish</button>
+      </form>
+    </section>
+
+    <section class="admin-section">
+      <h2>Posts</h2>
+      <ul class="admin-list">
+        <li><span class="admin-list-date">Nov 21, 2026</span><a href="#">ACID</a><form style="margin-left:auto"><button class="admin-button" type="button">Delete</button></form></li>
+        <li><span class="admin-list-date">Nov 19, 2026</span><a href="#">DRY</a><form style="margin-left:auto"><button class="admin-button" type="button">Delete</button></form></li>
+      </ul>
+    </section>
+
+    <footer class="site-footer">
+      <p>Short posts. No noise.</p>
+    </footer>
+  </div>
+</body>
+</html>

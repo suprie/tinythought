@@ -1,4 +1,6 @@
+pub mod auth;
 pub mod content;
+mod post_image;
 pub mod repositories;
 pub mod routes;
 pub mod services;
@@ -9,12 +11,14 @@ use std::println;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use axum::Router;
-use axum::extract::{Request, State};
-use axum::http::StatusCode;
-use axum::middleware::{Next, from_fn_with_state};
-use axum::response::Response;
 use axum::routing::{get, post};
+use axum::{
+    Router,
+    extract::DefaultBodyLimit,
+    http::{HeaderValue, header},
+    middleware,
+    response::Response,
+};
 use tower_http::services::ServeDir;
 
 use crate::services::{CategoryService, MigrationService, PostService};
@@ -24,11 +28,12 @@ pub const REINDEX_INTERVAL: Duration = Duration::from_secs(5 * 60 * 60);
 pub struct AppState {
     pub index: RwLock<content::Index>,
     pub content_dir: PathBuf,
+    pub upload_dir: PathBuf,
     /// Absolute origin (no trailing slash) used for canonical/OG URLs and the
     /// sitemap. Override via `SITE_URL` in production — search engines and
     /// link-preview crawlers (LinkedIn, Slack, ...) need real absolute URLs.
     pub site_url: String,
-    pub token: String,
+    pub admin_auth: auth::AdminAuth,
     pub category_services: Arc<CategoryService>,
     pub migration_services: Arc<MigrationService>,
     pub post_services: Arc<PostService>,
@@ -38,7 +43,7 @@ pub type SharedState = Arc<AppState>;
 
 pub fn build_state(
     content_dir: PathBuf,
-    token: String,
+    admin_auth: auth::AdminAuth,
     category_services: Arc<CategoryService>,
     post_services: Arc<PostService>,
     migration_services: Arc<MigrationService>,
@@ -48,11 +53,15 @@ pub fn build_state(
         .unwrap_or_else(|_| "http://localhost:3000".to_string())
         .trim_end_matches('/')
         .to_string();
+    let upload_dir = std::env::var_os("UPLOAD_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("uploads"));
     Arc::new(AppState {
         index: RwLock::new(index),
         content_dir,
+        upload_dir,
         site_url,
-        token,
+        admin_auth,
         category_services,
         migration_services,
         post_services,
@@ -60,6 +69,17 @@ pub fn build_state(
 }
 
 pub fn build_router(state: SharedState) -> Router {
+    let uploads = Router::new()
+        .nest_service("/uploads", ServeDir::new(state.upload_dir.clone()))
+        .route_layer(middleware::map_response(|mut response: Response| async {
+            if response.status().is_success() {
+                response.headers_mut().insert(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=3600"),
+                );
+            }
+            response
+        }));
     Router::new()
         .route("/", get(routes::home))
         .route("/health", get(routes::health))
@@ -67,17 +87,16 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/{category}", get(routes::category_page))
         .route("/sitemap.xml", get(routes::sitemap_xml))
         .route("/robots.txt", get(routes::robots_txt))
+        .route("/admin", get(routes::admin_page))
+        .route("/admin/login", post(routes::admin_login))
+        .route("/admin/logout", post(routes::admin_logout))
+        .route("/admin/posts", post(routes::admin_create))
+        .route("/admin/posts/{id}/delete", post(routes::admin_delete))
         .fallback(routes::not_found)
         .nest_service("/static", ServeDir::new("public/static"))
+        .merge(uploads)
+        .layer(DefaultBodyLimit::max(6 * 1024 * 1024))
         .with_state(state)
-}
-
-pub fn build_protected_router(state: SharedState) -> Router {
-    Router::new()
-        .route("/migrate", get(routes::migrate))
-        .route("/posts", post(routes::posts))
-        .route_layer(from_fn_with_state(state.clone(), auth))
-        .with_state(state) // Important: attach state to router
 }
 
 /// Reindexes `state.content_dir` every [`REINDEX_INTERVAL`], swapping the
@@ -134,22 +153,4 @@ pub fn spawn_content_watcher(state: SharedState) {
             println!("reindexed (content changed): {count} posts");
         }
     });
-}
-
-async fn auth(
-    State(state): State<SharedState>,
-    req: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let ok = req
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|f| f.to_str().ok())
-        .and_then(|f| f.strip_prefix("Bearer "))
-        .is_some_and(|token| token == state.token);
-    if ok {
-        Ok(next.run(req).await)
-    } else {
-        Err(StatusCode::UNAUTHORIZED)
-    }
 }

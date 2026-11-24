@@ -25,6 +25,10 @@ impl PostService {
         self.repository.create(clone_post, category_id).await
     }
 
+    pub async fn delete_post(&self, id: i64) -> Result<(), AppError> {
+        self.repository.delete(id).await
+    }
+
     fn render_markdown(&self, body: &str) -> String {
         let parser =
             pulldown_cmark::Parser::new_ext(body, pulldown_cmark::Options::ENABLE_STRIKETHROUGH);

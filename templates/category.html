@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
 {% block heading %}
-<h1 class="hero-title">{{ category.title }}</h1>
+<h1 class="page-heading">{{ category.title }}</h1>
 {% endblock %}
 
 {% block content %}
 {% if posts.is_empty() %}
 <p class="empty">No posts in this category yet.</p>
 {% else %}
-<ul class="card-list">
+<ul class="entry-list">
   {% for post in posts %}
   {% include "post_card.html" %}
   {% endfor %}

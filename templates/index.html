@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
 {% block heading %}
-<h1 class="hero-title">Tiny thoughts.</h1>
+<h1 class="page-heading">Tiny thoughts.</h1>
 {% endblock %}
 
 {% block content %}
 {% if posts.is_empty() %}
 <p class="empty">No posts yet.</p>
 {% else %}
-<ul class="card-list">
+<ul class="entry-list entry-list-home">
   {% for post in posts %}
   {% include "post_card.html" %}
   {% endfor %}
