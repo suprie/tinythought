@@ -70,14 +70,12 @@ pub struct PostTable {
     pub category_slug: String,
     pub html: String,
     pub raw: String,
-    pub created_at: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl PostTable {
     pub fn date_label(&self) -> String {
-        chrono::DateTime::parse_from_rfc3339(&self.created_at)
-            .map(|d| d.format("%b %-d, %Y").to_string())
-            .unwrap_or_else(|_| self.created_at.clone())
+        self.created_at.format("%b %-d, %Y").to_string()
     }
 
     pub fn excerpt(&self) -> String {
@@ -104,13 +102,6 @@ pub struct CategoryTable {
     pub id: i64,
     pub slug: String,
     pub title: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreatePost {
-    pub title: String,
-    pub category: String,
-    pub content: String,
 }
 
 impl Category {

@@ -4,8 +4,7 @@ use crate::repositories::{
 };
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::pool::Pool;
-use sqlx::{Sqlite, SqlitePool};
+use sqlx::PgPool;
 
 #[async_trait]
 pub trait PostRepository: Send + Sync {
@@ -13,20 +12,21 @@ pub trait PostRepository: Send + Sync {
     async fn find_by_slug(&self, slug: &str) -> Result<PostTable, AppError>;
 
     async fn create(&self, post: Post, category_id: i64) -> Result<(), AppError>;
+    async fn delete(&self, id: i64) -> Result<(), AppError>;
 }
 
-pub struct SQLitePostRepository {
-    pool: Pool<Sqlite>,
+pub struct PgPostRepository {
+    pool: PgPool,
 }
 
-impl SQLitePostRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+impl PgPostRepository {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
-impl PostRepository for SQLitePostRepository {
+impl PostRepository for PgPostRepository {
     async fn find_all(&self) -> Result<Vec<PostTable>, AppError> {
         sqlx::query_as!(
             PostTable,
@@ -59,8 +59,8 @@ impl PostRepository for SQLitePostRepository {
             &category_id,
             &post.html,
             &post.raw,
-            Utc::now().to_rfc3339(),
-            Utc::now().to_rfc3339()
+            Utc::now(),
+            Utc::now()
         )
         .execute(&self.pool)
         .await
@@ -93,6 +93,18 @@ impl PostRepository for SQLitePostRepository {
         .await
         .map_err(AppError::Database)
     }
+
+    // Runtime-checked query (not the `query!` macro): there's no database on
+    // this dev machine to regenerate the sqlx offline cache for a new macro
+    // query, and macro queries fail to compile without one.
+    async fn delete(&self, id: i64) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM posts WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::Database)
+            .map(|_| ())
+    }
 }
 
 #[cfg(test)]
@@ -102,21 +114,20 @@ mod tests {
     use super::*;
 
     #[sqlx::test]
-    async fn test_find_all(pool: Pool<Sqlite>) {
-        let result = sqlx::query(
+    async fn test_find_all(pool: PgPool) {
+        let category_id: i64 = sqlx::query_scalar(
             r#"
                INSERT INTO categories (slug, title)
-               VALUES (?, ?)
+               VALUES ($1, $2)
+               RETURNING id
                "#,
         )
         .bind("rust")
         .bind("Rust")
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .expect("category should be inserted");
-
-        let category_id = result.last_insert_rowid();
-        let post_repository = SQLitePostRepository::new(pool);
+        let post_repository = PgPostRepository::new(pool);
         let post = Post {
             title: "Rust".to_string(),
             slug: "rust".to_string(),
@@ -147,25 +158,24 @@ mod tests {
 
         assert_eq!(saved_post.slug, "rust");
         assert_eq!(saved_post.title, "Rust");
-        assert!(!saved_post.created_at.is_empty());
+        assert!(saved_post.created_at <= Utc::now());
     }
 
     #[sqlx::test]
-    async fn test_find_by_slug(pool: Pool<Sqlite>) {
-        let result = sqlx::query(
+    async fn test_find_by_slug(pool: PgPool) {
+        let category_id: i64 = sqlx::query_scalar(
             r#"
                INSERT INTO categories (slug, title)
-               VALUES (?, ?)
+               VALUES ($1, $2)
+               RETURNING id
                "#,
         )
         .bind("rust")
         .bind("Rust")
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .expect("category should be inserted");
-
-        let category_id = result.last_insert_rowid();
-        let post_repository = SQLitePostRepository::new(pool);
+        let post_repository = PgPostRepository::new(pool);
         let post = Post {
             title: "Rust".to_string(),
             slug: "rust".to_string(),
@@ -191,6 +201,6 @@ mod tests {
 
         assert_eq!(saved_post.slug, "rust");
         assert_eq!(saved_post.title, "Rust");
-        assert!(!saved_post.created_at.is_empty());
+        assert!(saved_post.created_at <= Utc::now());
     }
 }

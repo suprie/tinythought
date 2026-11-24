@@ -25,28 +25,8 @@ impl PostService {
         self.repository.create(clone_post, category_id).await
     }
 
-    fn plain_excerpt(&self, body: &str, max_chars: usize) -> String {
-        use pulldown_cmark::{Event, Parser};
-
-        let mut text = String::new();
-        for event in Parser::new(body) {
-            match event {
-                Event::Text(t) | Event::Code(t) => text.push_str(&t),
-                Event::SoftBreak | Event::HardBreak => text.push(' '),
-                Event::End(pulldown_cmark::TagEnd::Paragraph) if !text.is_empty() => break,
-                _ => {}
-            }
-        }
-        let text = text.trim();
-
-        if text.chars().count() <= max_chars {
-            return text.to_string();
-        }
-        let truncated: String = text.chars().take(max_chars).collect();
-        match truncated.rsplit_once(' ') {
-            Some((head, _)) => format!("{head}…"),
-            None => format!("{truncated}…"),
-        }
+    pub async fn delete_post(&self, id: i64) -> Result<(), AppError> {
+        self.repository.delete(id).await
     }
 
     fn render_markdown(&self, body: &str) -> String {

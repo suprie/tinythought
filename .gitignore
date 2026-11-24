@@ -1,6 +1,7 @@
 /target
 /samples
 .env
+/uploads/
 *.db
 *.db-shm
 *.db-wal

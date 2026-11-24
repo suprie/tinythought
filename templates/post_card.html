@@ -1,7 +1,5 @@
-<li class="card">
-  <div class="card-top">
-    <h2 class="card-title"><a href="/posts/{{ post.slug }}">#{{ post.title }}</a></h2>
-    <span class="card-date">{{ post.date_label() }}</span>
-  </div>
-  <p class="card-excerpt">{{ post.excerpt() }}</p>
+<li class="entry">
+  <div class="entry-date">{{ post.date_label() }}</div>
+  <h2 class="entry-title"><a href="/posts/{{ post.slug }}">{{ post.title }}</a></h2>
+  <p class="entry-excerpt">{{ post.excerpt() }}</p>
 </li>

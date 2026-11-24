@@ -198,7 +198,6 @@ pub(crate) fn plain_excerpt(body: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn markdown_body_renders_to_html() {
