@@ -2,7 +2,7 @@ use askama::Template;
 use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use chrono::Utc;
+use chrono::{Datelike, NaiveDate, Utc};
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -23,7 +23,9 @@ pub async fn health() -> &'static str {
 pub async fn home(State(state): State<SharedState>) -> Result<Html<String>, AppError> {
     let categories = &state.category_services.get_categories().await.unwrap();
     let mut posts = state.post_services.get_posts().await.unwrap();
-    posts.sort_unstable_by_key(|post| std::cmp::Reverse((post.created_at, post.id)));
+    posts.sort_unstable_by_key(|post| {
+        std::cmp::Reverse((post.published_date(), post.created_at, post.id))
+    });
     let tmpl = IndexTemplate {
         categories,
         posts: &posts,
@@ -70,6 +72,7 @@ pub async fn post_detail(
             let tmpl = PostTemplate {
                 categories,
                 post,
+                html: &state.post_services.render_markdown(&post.raw),
                 site_url: &state.site_url,
             };
             Ok(Html(tmpl.render().expect("post template renders")).into_response())
@@ -126,6 +129,7 @@ struct PostForm {
     title: String,
     category: String,
     content: String,
+    published_date: Option<String>,
     csrf_token: String,
     images: Vec<(Option<usize>, Vec<u8>)>,
     revision: Option<i64>,
@@ -138,6 +142,7 @@ async fn parse_post_form(mut multipart: Multipart) -> Result<PostForm, ()> {
             "title" => form.title = field.text().await.map_err(|_| ())?,
             "category" => form.category = field.text().await.map_err(|_| ())?,
             "content" => form.content = field.text().await.map_err(|_| ())?,
+            "published_date" => form.published_date = Some(field.text().await.map_err(|_| ())?),
             "csrf_token" => form.csrf_token = field.text().await.map_err(|_| ())?,
             "revision" => {
                 form.revision = Some(
@@ -272,6 +277,7 @@ async fn render_editor(
         title: &form.title,
         category: &form.category,
         raw: &form.content,
+        published_date: form.published_date.as_deref().unwrap_or_default(),
         revision: form.revision,
         error,
         csrf_token,
@@ -314,10 +320,12 @@ pub async fn admin_post_editor(
         Ok(post) => post,
         Err(error) => return Ok(admin_lookup_error(error)),
     };
+    let published_date = post.published_date().to_string();
     let form = PostForm {
         title: post.title,
         category: post.category_name,
         content: post.raw,
+        published_date: Some(published_date),
         ..PostForm::default()
     };
     render_editor(&state, &csrf, EditorTarget::Post(id), &form, None).await
@@ -335,10 +343,12 @@ pub async fn admin_draft_editor(
         Ok(draft) => draft,
         Err(error) => return Ok(admin_lookup_error(error)),
     };
+    let published_date = draft.preview_date().map(|date| date.to_string());
     let form = PostForm {
         title: draft.title,
         category: draft.category,
         content: draft.raw,
+        published_date,
         revision: Some(draft.revision),
         ..PostForm::default()
     };
@@ -412,6 +422,24 @@ async fn save_editor(
         .await;
     }
 
+    let published_date = match form.published_date.as_deref().map(str::trim) {
+        Some("") => None,
+        None => draft.as_ref().and_then(|draft| draft.published_date),
+        Some(value) => match value.parse::<NaiveDate>() {
+            Ok(date) if (1..=9999).contains(&date.year()) => Some(date),
+            _ => {
+                return render_editor(
+                    state,
+                    &csrf,
+                    target,
+                    &form,
+                    Some("Enter a valid published date."),
+                )
+                .await;
+            }
+        },
+    };
+
     let mut raw = form.content.clone();
     let uploads = std::mem::take(&mut form.images);
     let images = match prepare_draft_images(&mut raw, uploads).await {
@@ -426,6 +454,7 @@ async fn save_editor(
     let input = DraftInput {
         title: form.title.trim().to_owned(),
         category: form.category.trim().to_owned(),
+        published_date,
         referenced_images: markdown_images(&raw)
             .filter_map(|url| url.strip_prefix("/post-images/").map(str::to_owned))
             .collect(),
@@ -522,8 +551,8 @@ async fn render_preview(
         draft,
         html: &state.post_services.render_draft(draft),
         date_label: draft
-            .published_at
-            .unwrap_or_else(Utc::now)
+            .preview_date()
+            .unwrap_or_else(|| Utc::now().date_naive())
             .format("%b %-d, %Y")
             .to_string(),
         csrf_token,

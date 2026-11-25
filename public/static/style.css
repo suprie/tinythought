@@ -236,6 +236,12 @@ body {
   padding: 0;
 }
 
+.post-body pre .syntax-comment { color: #57606a; }
+.post-body pre :is(.syntax-keyword, .syntax-storage) { color: #a40e26; }
+.post-body pre .syntax-string { color: #0a542d; }
+.post-body pre :is(.syntax-constant, .syntax-variable, .syntax-escape) { color: #074d9b; }
+.post-body pre :is(.syntax-entity, .syntax-support) { color: #6640a0; }
+
 .post-body hr {
   border: none;
   border-top: 1px solid var(--hairline);

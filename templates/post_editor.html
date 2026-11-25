@@ -23,6 +23,9 @@
     <label class="admin-label" for="category">Category</label>
     <input class="admin-input" type="text" id="category" name="category" value="{{ category }}" required aria-describedby="category-hint">
     <p class="admin-hint" id="category-hint">New categories are created on publish.</p>
+    <label class="admin-label" for="published-date">Published date</label>
+    <input class="admin-input" type="date" id="published-date" name="published_date" value="{{ published_date }}" max="9999-12-31" aria-describedby="published-date-hint">
+    <p class="admin-hint" id="published-date-hint">Leave blank to use the day you publish or keep the current date.</p>
     <label class="admin-label" for="content">Body (Markdown)</label>
     <textarea class="admin-textarea" id="content" name="content" required>{{ raw }}</textarea>
     <label class="admin-label" id="image-label" for="image">Images (optional)</label>

@@ -71,6 +71,7 @@ pub struct PostTable {
     pub html: String,
     pub raw: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub published_date: Option<chrono::NaiveDate>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -82,20 +83,33 @@ pub struct PostDraft {
     pub raw: String,
     pub revision: i64,
     pub image_filenames: Vec<String>,
-    pub published_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub published_date: Option<chrono::NaiveDate>,
+    pub live_published_date: Option<chrono::NaiveDate>,
+}
+
+impl PostDraft {
+    pub fn preview_date(&self) -> Option<chrono::NaiveDate> {
+        self.published_date.or(self.live_published_date)
+    }
 }
 
 pub struct DraftInput {
     pub title: String,
     pub category: String,
     pub raw: String,
+    pub published_date: Option<chrono::NaiveDate>,
     pub images: Vec<(String, Vec<u8>)>,
     pub referenced_images: Vec<String>,
 }
 
 impl PostTable {
+    pub fn published_date(&self) -> chrono::NaiveDate {
+        self.published_date
+            .unwrap_or_else(|| self.created_at.date_naive())
+    }
+
     pub fn date_label(&self) -> String {
-        self.created_at.format("%b %-d, %Y").to_string()
+        self.published_date().format("%b %-d, %Y").to_string()
     }
 
     pub fn excerpt(&self) -> String {

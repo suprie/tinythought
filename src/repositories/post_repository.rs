@@ -66,7 +66,8 @@ impl PostRepository for PgPostRepository {
                 c.slug as category_slug,
                 p.body_markdown as raw,
                 p.body_html as html,
-                p.created_at as created_at
+                p.created_at as created_at,
+                p.published_date
             FROM posts AS p
             INNER JOIN categories as C
             ON c.id = p.category_id"#
@@ -107,7 +108,8 @@ impl PostRepository for PgPostRepository {
                 c.slug as category_slug,
                 p.body_markdown as raw,
                 p.body_html as html,
-                p.created_at as created_at
+                p.created_at as created_at,
+                p.published_date
             FROM posts AS p
             INNER JOIN categories as C
             ON c.id = p.category_id
@@ -123,7 +125,8 @@ impl PostRepository for PgPostRepository {
     async fn find_by_id(&self, id: i64) -> Result<PostTable, AppError> {
         sqlx::query_as(
             "SELECT p.id, p.title, p.slug, p.category_id, c.title AS category_name,
-                    c.slug AS category_slug, p.body_markdown AS raw, p.body_html AS html, p.created_at
+                    c.slug AS category_slug, p.body_markdown AS raw, p.body_html AS html,
+                    p.created_at, p.published_date
              FROM posts p JOIN categories c ON c.id = p.category_id WHERE p.id = $1",
         )
         .bind(id)
@@ -149,7 +152,9 @@ impl PostRepository for PgPostRepository {
         sqlx::query_as(
             "SELECT d.id, d.post_id, d.title, d.category, d.body_markdown AS raw, d.revision,
                     ARRAY(SELECT i.filename FROM post_images i WHERE i.draft_id = d.id) AS image_filenames,
-                    p.created_at AS published_at
+                    d.published_date,
+                    COALESCE(p.published_date, (p.created_at AT TIME ZONE 'UTC')::date)
+                        AS live_published_date
              FROM post_drafts d
              LEFT JOIN posts p ON p.id = d.post_id
              WHERE ($1::bigint IS NULL OR d.id = $1) AND ($2::bigint IS NULL OR d.post_id = $2)
@@ -173,29 +178,29 @@ impl PostRepository for PgPostRepository {
             Some((id, revision)) => {
                 sqlx::query_scalar(
                     "UPDATE post_drafts SET title = $1, category = $2, body_markdown = $3,
-                            revision = revision + 1
-                     WHERE id = $4 AND revision = $5 RETURNING id",
+                            published_date = $4, revision = revision + 1
+                     WHERE id = $5 AND revision = $6 RETURNING id",
                 )
                 .bind(input.title)
                 .bind(input.category)
                 .bind(input.raw)
+                .bind(input.published_date)
                 .bind(id)
                 .bind(revision)
                 .fetch_one(&mut *tx)
                 .await
             }
-            None => {
-                sqlx::query_scalar(
-                    "INSERT INTO post_drafts (title, category, body_markdown, post_id)
-                     VALUES ($1, $2, $3, $4) RETURNING id",
-                )
-                .bind(input.title)
-                .bind(input.category)
-                .bind(input.raw)
-                .bind(post_id)
-                .fetch_one(&mut *tx)
-                .await
-            }
+            None => sqlx::query_scalar(
+                "INSERT INTO post_drafts (title, category, body_markdown, published_date, post_id)
+                     VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            )
+            .bind(input.title)
+            .bind(input.category)
+            .bind(input.raw)
+            .bind(input.published_date)
+            .bind(post_id)
+            .fetch_one(&mut *tx)
+            .await,
         }
         .map_err(AppError::Database)?;
 
@@ -266,25 +271,27 @@ impl PostRepository for PgPostRepository {
         if let Some(post_id) = draft.post_id {
             sqlx::query(
                 "UPDATE posts SET title = $1, category_id = $2, body_markdown = $3, body_html = $4,
-                        updated_at = now() WHERE id = $5",
+                        published_date = COALESCE($5, published_date), updated_at = now() WHERE id = $6",
             )
             .bind(&draft.title)
             .bind(category_id)
             .bind(raw)
             .bind(html)
+            .bind(draft.published_date)
             .bind(post_id)
             .execute(&mut *tx)
             .await
         } else {
             sqlx::query(
-                "INSERT INTO posts (title, category_id, body_markdown, body_html, slug)
-                 VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO posts (title, category_id, body_markdown, body_html, slug, published_date)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(&draft.title)
             .bind(category_id)
             .bind(raw)
             .bind(html)
             .bind(slug)
+            .bind(draft.published_date)
             .execute(&mut *tx)
             .await
         }

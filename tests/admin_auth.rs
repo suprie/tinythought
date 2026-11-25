@@ -108,7 +108,7 @@ fn form_request(path: &str, body: &str, cookie: Option<&str>) -> Request<Body> {
 }
 
 fn post_request(path: &str, csrf: &str, cookie: Option<&str>) -> Request<Body> {
-    draft_request(path, csrf, cookie, "Test", "News", "Body", None)
+    draft_request(path, csrf, cookie, "Test", "News", "Body", &[])
 }
 
 fn draft_request(
@@ -118,7 +118,7 @@ fn draft_request(
     title: &str,
     category: &str,
     content: &str,
-    revision: Option<i64>,
+    fields: &[(&str, &str)],
 ) -> Request<Body> {
     let boundary = "tinythought-test-boundary";
     let mut body = format!(
@@ -127,9 +127,9 @@ fn draft_request(
          --{boundary}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n{content}\r\n\
          --{boundary}\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\n{csrf}\r\n"
     );
-    if let Some(revision) = revision {
+    for (name, value) in fields {
         body.push_str(&format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"revision\"\r\n\r\n{revision}\r\n"
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
         ));
     }
     body.push_str(&format!("--{boundary}--\r\n"));
@@ -281,7 +281,7 @@ async fn publishing_inline_images_preserves_their_placement_and_serves_them(pool
             "Image test",
             "News",
             &reordered,
-            Some(1),
+            &[("revision", "1")],
         ))
         .await
         .unwrap();
@@ -404,18 +404,47 @@ async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_publishe
     .await
     .unwrap();
     let post_id: i64 = sqlx::query_scalar(
-        "INSERT INTO posts (slug, title, category_id, body_markdown, body_html)
-         VALUES ('original', 'Original title', $1, 'Original body', '<p>Original body</p>')
+        "INSERT INTO posts (slug, title, category_id, body_markdown, body_html, created_at)
+         VALUES ('original', 'Original title', $1, $2, '<p>Original body</p>', '2020-06-15T23:59:00Z')
          RETURNING id",
     )
     .bind(category_id)
+    .bind("Original body\n\n```swift\nlet value = 1\n```")
     .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO posts (slug, title, category_id, body_markdown, body_html, created_at)
+         VALUES ('another', 'Another title', $1, 'Another body', '<p>Another body</p>', '2021-01-01T00:00:00Z')",
+    )
+    .bind(category_id)
+    .execute(&pool)
     .await
     .unwrap();
 
     let edit_post_url = format!("/admin/posts/{post_id}/edit");
     let editor = body_text(get(&app, &edit_post_url, Some(&cookie)).await).await;
     assert!(editor.contains("Original body"));
+    assert!(editor.contains("name=\"published_date\" value=\"2020-06-15\""));
+    let invalid = app
+        .clone()
+        .oneshot(draft_request(
+            &edit_post_url,
+            &csrf,
+            Some(&cookie),
+            "Draft title",
+            "Ideas",
+            "Draft body",
+            &[("published_date", "2022-02-30")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        body_text(invalid)
+            .await
+            .contains("Enter a valid published date.")
+    );
     let saved = app
         .clone()
         .oneshot(draft_request(
@@ -424,8 +453,8 @@ async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_publishe
             Some(&cookie),
             "Draft title",
             "Ideas",
-            "**Draft body**",
-            None,
+            "**Draft body**\n\n```json\n{\"ok\": true}\n```",
+            &[("published_date", "2022-02-03")],
         ))
         .await
         .unwrap();
@@ -437,9 +466,17 @@ async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_publishe
     assert_eq!(editor.headers()[header::LOCATION], edit_draft_url);
     let preview = body_text(get(&app, preview_url, Some(&cookie)).await).await;
     assert!(preview.contains("<strong>Draft body</strong>"));
+    assert!(preview.contains("Feb 3, 2022"));
+    assert!(preview.contains("syntax-constant"));
+    let draft_editor = body_text(get(&app, &edit_draft_url, Some(&cookie)).await).await;
+    assert!(draft_editor.contains("name=\"published_date\" value=\"2022-02-03\""));
     let live = body_text(get(&app, "/posts/original", None).await).await;
     assert!(live.contains("Original body"));
+    assert!(live.contains("Jun 15, 2020"));
+    assert!(live.contains("syntax-storage"));
     assert!(!live.contains("Draft body"));
+    let home = body_text(get(&app, "/", None).await).await;
+    assert!(home.find("Another title").unwrap() < home.find("Original title").unwrap());
     assert_eq!(
         get(&app, "/ideas", None).await.status(),
         StatusCode::NOT_FOUND
@@ -454,7 +491,7 @@ async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_publishe
             "Updated title",
             "Ideas",
             "**Updated body**",
-            Some(1),
+            &[("revision", "1")],
         ))
         .await
         .unwrap();
@@ -493,11 +530,11 @@ async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_publishe
     assert_eq!(published.headers()[header::LOCATION], "/admin?posted=1");
     let live = get(&app, "/posts/original", None).await;
     assert_eq!(live.status(), StatusCode::OK);
-    assert!(
-        body_text(live)
-            .await
-            .contains("<strong>Updated body</strong>")
-    );
+    let live = body_text(live).await;
+    assert!(live.contains("<strong>Updated body</strong>"));
+    assert!(live.contains("Feb 3, 2022"));
+    let home = body_text(get(&app, "/", None).await).await;
+    assert!(home.find("Updated title").unwrap() < home.find("Another title").unwrap());
     assert!(
         body_text(get(&app, "/ideas", None).await)
             .await
@@ -513,7 +550,7 @@ async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_publishe
             "Discarded title",
             "Ideas",
             "Discarded body",
-            None,
+            &[],
         ))
         .await
         .unwrap();
