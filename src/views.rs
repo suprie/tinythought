@@ -91,6 +91,7 @@ impl NavContext for CategoryTemplate<'_> {
 pub struct PostTemplate<'a> {
     pub categories: &'a [CategoryTable],
     pub post: &'a PostTable,
+    pub html: &'a str,
     pub site_url: &'a str,
 }
 
@@ -170,6 +171,7 @@ pub struct PostEditorTemplate<'a> {
     pub title: &'a str,
     pub category: &'a str,
     pub raw: &'a str,
+    pub published_date: &'a str,
     pub revision: Option<i64>,
     pub error: Option<&'a str>,
     pub csrf_token: &'a str,

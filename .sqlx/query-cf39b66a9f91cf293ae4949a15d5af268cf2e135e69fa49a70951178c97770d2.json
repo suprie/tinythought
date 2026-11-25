@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            Select\n                p.id,\n                p.title,\n                p.slug,\n                c.id as category_id,\n                c.title as category_name,\n                c.slug as category_slug,\n                p.body_markdown as raw,\n                p.body_html as html,\n                p.created_at as created_at\n            FROM posts AS p\n            INNER JOIN categories as C\n            ON c.id = p.category_id",
+  "query": "\n            Select\n                p.id,\n                p.title,\n                p.slug,\n                c.id as category_id,\n                c.title as category_name,\n                c.slug as category_slug,\n                p.body_markdown as raw,\n                p.body_html as html,\n                p.created_at as created_at,\n                p.published_date\n            FROM posts AS p\n            INNER JOIN categories as C\n            ON c.id = p.category_id",
   "describe": {
     "columns": [
       {
@@ -101,6 +101,17 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "ordinal": 9,
+        "name": "published_date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "posts",
+            "name": "published_date"
+          }
+        }
       }
     ],
     "parameters": {
@@ -115,8 +126,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "aa9c66af3f4beacb9b598d504dee90034d41b3545aceba92263b2dddda91260c"
+  "hash": "cf39b66a9f91cf293ae4949a15d5af268cf2e135e69fa49a70951178c97770d2"
 }

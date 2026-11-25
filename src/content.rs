@@ -161,7 +161,7 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), String> {
     Ok((frontmatter, body))
 }
 
-fn render_markdown(body: &str) -> String {
+pub(crate) fn render_markdown(body: &str) -> String {
     let parser =
         pulldown_cmark::Parser::new_ext(body, pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
     let mut html = String::new();
