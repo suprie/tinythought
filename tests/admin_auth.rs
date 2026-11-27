@@ -36,6 +36,10 @@ async fn admin_session_requires_csrf_and_is_revoked_on_logout() {
     );
     let app = build_router(state.clone());
 
+    let sign_in = get(&app, "/admin", None).await;
+    assert_eq!(sign_in.status(), StatusCode::OK);
+    assert!(!body_text(sign_in).await.contains("googletagmanager.com"));
+
     let bad_login = app
         .clone()
         .oneshot(form_request(
@@ -187,6 +191,10 @@ async fn body_text(response: axum::response::Response) -> String {
 async fn publishing_inline_images_preserves_their_placement_and_serves_them(pool: PgPool) {
     let (app, cookie, csrf) = signed_in_app(&pool);
 
+    let missing = get(&app, "/admin/missing", None).await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert!(!body_text(missing).await.contains("googletagmanager.com"));
+
     let mut image = Vec::new();
     let mut encoder = png::Encoder::new(&mut image, 2000, 1000);
     encoder
@@ -204,6 +212,7 @@ async fn publishing_inline_images_preserves_their_placement_and_serves_them(pool
     let preview_url = response.headers()[header::LOCATION].to_str().unwrap();
     let draft_url = preview_url.strip_suffix("/preview").unwrap();
     let dashboard = body_text(get(&app, "/admin", Some(&cookie)).await).await;
+    assert!(!dashboard.contains("googletagmanager.com"));
     assert!(dashboard.contains(preview_url));
     assert!(dashboard.contains("Image test"));
     assert_eq!(
@@ -214,6 +223,7 @@ async fn publishing_inline_images_preserves_their_placement_and_serves_them(pool
     assert_eq!(preview.status(), StatusCode::OK);
     assert_eq!(preview.headers()[header::CACHE_CONTROL], "no-store");
     let preview = body_text(preview).await;
+    assert!(!preview.contains("googletagmanager.com"));
     assert!(preview.contains("noindex, nofollow"));
     assert!(preview.contains("Draft preview"));
     let image_prefix = format!("{draft_url}/image/");
@@ -339,6 +349,12 @@ async fn publishing_inline_images_preserves_their_placement_and_serves_them(pool
         .unwrap();
     assert_eq!(detail.status(), StatusCode::OK);
     let body = body_text(detail).await;
+    assert!(body.contains("event: 'gtm.js'"));
+    for path in ["/", "/news"] {
+        let page = get(&app, path, None).await;
+        assert_eq!(page.status(), StatusCode::OK);
+        assert!(body_text(page).await.contains("event: 'gtm.js'"));
+    }
     assert!(body.contains(&format!(
         "<p>Middle</p>\n<p><img src=\"{public_path}\" alt=\"First photo\" /></p>\n<p>Closing</p>"
     )));
@@ -424,6 +440,7 @@ async fn edited_posts_keep_the_live_version_until_the_reviewed_draft_is_publishe
 
     let edit_post_url = format!("/admin/posts/{post_id}/edit");
     let editor = body_text(get(&app, &edit_post_url, Some(&cookie)).await).await;
+    assert!(!editor.contains("googletagmanager.com"));
     assert!(editor.contains("Original body"));
     assert!(editor.contains("name=\"published_date\" value=\"2020-06-15\""));
     let invalid = app

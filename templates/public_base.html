@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block analytics %}
+  <script>
+    (function () {
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
+
+      const container = document.createElement('script');
+      container.async = true;
+      container.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-KN7M6L3C';
+      document.head.appendChild(container);
+    })();
+  </script>
+{% endblock %}
